@@ -22,9 +22,12 @@
 ### 一键启动
 
 ```bash
-# 1. 克隆并进入目录
-git clone <repo-url> insightforge
+# 1. 克隆并进入目录(SSH)
+git clone git@github.com:MatuX-ai/InsignForge.git insightforge
 cd insightforge
+
+# 或者 HTTPS 方式
+# git clone https://github.com/MatuX-ai/InsignForge.git insightforge
 
 # 2. 配置环境变量
 cp .env.example .env
