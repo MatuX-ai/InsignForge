@@ -1,0 +1,136 @@
+# ============================================================
+# InsightForge 个人版 - Docker Compose 一键编排
+# 严格按 docs/03-技术文档.md §5.2.1 设计
+#
+# 说明: OpenSerp 在 ghcr.io 上拉取受限,这里使用一个轻量 mock 服务
+#   - 后端的 OpenSerpClient 已设计为失败降级(返回空数组)
+#   - HN/Reddit 已通过公开 API 直接访问
+#   - 生产部署时可替换为真实的 OpenSerp 镜像或自托管实例
+# ============================================================
+name: insightforge
+
+services:
+  # ---------- 后端 API ----------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: insightforge-backend:1.0
+    container_name: insightforge-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-openserp}
+      # 指向 mock-openserp 或真实服务,backend 已做优雅降级
+      OPENSERP_URL: ${OPENSERP_URL:-http://mock-openserp:8080}
+      SERPAPI_KEY: ${SERPAPI_KEY:-}
+      DATABASE_URL: /app/data/insightforge.db
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      RESEARCH_TIMEOUT: ${RESEARCH_TIMEOUT:-300}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      mock-openserp:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O-', 'http://localhost:3001/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - insightforge-net
+
+  # ---------- 前端 (nginx 提供静态服务) ----------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: insightforge-frontend:1.0
+    container_name: insightforge-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O-', 'http://127.0.0.1:3000/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - insightforge-net
+
+  # ---------- OpenSerp 占位服务(MVP 阶段) ----------
+  # 提供 /health 接口即可,真正的搜索结果由 HN/Reddit 公开 API 提供
+  # 生产部署时请替换为 ghcr.io/openserp/openserp:latest 或自托管实例
+  mock-openserp:
+    image: alpine:3.20
+    container_name: insightforge-openserp
+    restart: unless-stopped
+    command: >
+      sh -c "
+      apk add --no-cache busybox-extras >/dev/null 2>&1;
+      mkdir -p /www;
+      echo '{\"results\":[]}' > /www/index.json;
+      cd /www;
+      httpd -f -p 8080 -h /www
+      "
+    ports:
+      - "${OPENSERP_PORT:-8080}:8080"
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O-', 'http://localhost:8080/index.json']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    networks:
+      - insightforge-net
+
+  # ---------- Workflow Automation MVP(预留,V1.0 未启用) ----------
+  # workflow:
+  #   build:
+  #     context: ./workflow
+  #     dockerfile: Dockerfile
+  #   container_name: insightforge-workflow
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${WORKFLOW_PORT:-5678}:5678"
+  #   environment:
+  #     - API_URL=http://backend:3001
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - insightforge-net
+
+  # ---------- Crawler(预留,V1.0 未启用) ----------
+  # crawler:
+  #   build:
+  #     context: ./crawler
+  #     dockerfile: Dockerfile
+  #   container_name: insightforge-crawler
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - mock-openserp
+  #   networks:
+  #     - insightforge-net
+
+networks:
+  insightforge-net:
+    driver: bridge
+
+# ============================================================
+# 数据持久化说明:
+# SQLite 数据库文件持久化到 ./data/insightforge.db
+# 首次启动会自动建表,删除该文件即可重置数据
+# ============================================================

@@ -1,0 +1,16 @@
+{
+  "name": "insightforge-crawler",
+  "version": "1.0.0",
+  "description": "Crawlee 独立爬虫服务(占位,v1.2 实现)",
+  "scripts": {
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "crawlee": "^3.10.0",
+    "playwright": "^1.47.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,84 @@
+# ---------- 依赖 ----------
+**/node_modules/
+**/package-lock.json.bak
+
+# ---------- 构建产物 ----------
+**/dist/
+**/build/
+**/.next/
+**/.nuxt/
+**/.output/
+**/.vite/
+
+# ---------- 环境变量 / 密钥 ----------
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+**/.env
+!**/.env.example
+
+# ---------- 运行时 / 数据库 ----------
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+data/build.log
+data/logs/
+data/*.log
+**/*.sqlite
+**/*.sqlite-journal
+
+# ---------- IDE / 编辑器 ----------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- 系统文件 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ---------- 日志 ----------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+
+# ---------- 临时文件 ----------
+*.tmp
+*.temp
+.cache/
+.tmp/
+.temp/
+
+# ---------- 测试 / 覆盖率 ----------
+coverage/
+.nyc_output/
+*.lcov
+
+# ---------- TypeScript ----------
+*.tsbuildinfo
+
+# ---------- Docker ----------
+.docker-data/
+
+# ---------- 工作流数据 ----------
+workflow/data/
+workflow/.n8n/
+
+# ---------- 爬虫产物 ----------
+crawler/output/
+crawler/storage/
+crawler/screenshots/
+
+# ---------- 项目级特殊文件 ----------
+workflow/
