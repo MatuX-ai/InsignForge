@@ -1,0 +1,113 @@
+# =====================================================================
+# Cordis 完整配置示例 - InsightForge dsh Plugin
+# =====================================================================
+#
+# 此文件展示在宿主 dsh 应用中如何将 InsightForge 插件接入 cordis 配置。
+# 复制后改名为 `cordis.yml` 即可。
+#
+# 字段对齐文档:
+#   - 4.2 节 Bundle 声明
+#   - 4.3 节 dsh 客户端打包入口
+#   - 5.2 节 peerDependencies 与注入
+#
+# 环境变量替换语法: `${VAR_NAME:default}` 或 `${VAR_NAME}`
+# =====================================================================
+
+# 全局 logger 配置(可选)
+logger:
+  level: info
+  pretty: false
+
+# 加载 Node 应用入口(可选,典型部署 dsh web 时无需指定)
+# node:
+#   entry: ./app.ts
+
+# ---------------------------------------------------------------------
+# dsh 应用配置
+# ---------------------------------------------------------------------
+dsh:
+  # 是否启用 Client 端的 UI 扩展(打包后挂 window.insightforgeClient)
+  client:
+    enabled: true
+
+  # Bundle 声明:声明本机已安装哪些插件包
+  # dsh runtime 启动时会自动 require 这些包并调用其 apply(ctx, config)
+  plugins:
+
+    # --- InsightForge 插件 ---------------------------------------------------
+    insightforge-plugin:
+      # $ 指向 node_modules 内的包名(或相对路径,例如 ./plugins/insightforge)
+      $: insightforge-dsh-plugin
+
+      # Config 段对应 src/config.ts 的 schemastery schema,加载时自动校验
+      Config:
+        # LLM 提供商:deepseek(默认) | openai | ollama
+        llmProvider: deepseek
+
+        # LLM API Key(必填)。ollama 模式下可填写占位符(如 "ollama")
+        llmApiKey: ${DEEPSEEK_API_KEY}
+
+        # 搜索引擎:openserp(默认,本地) | serpapi(云端,需 SERPAPI_KEY)
+        searchProvider: openserp
+
+        # OpenSerp 服务地址(默认 http://localhost:8080)
+        # 若使用 SerpAPI,可忽略此字段
+        searchEndpoint: ${INSIGHTFORGE_SEARCH_ENDPOINT:http://localhost:18080}
+
+        # SQLite 数据库路径(默认 ./data/insightforge.db)
+        # 与 InsightForge 个人版 data/ 目录相对路径一致即可共享需求库
+        dbPath: ./data/insightforge.db
+
+        # 是否启用结果缓存(LRU + 24h TTL)
+        cacheEnabled: true
+
+        # 最大并发调研任务数(1-32,默认 5)
+        maxConcurrent: 5
+
+      # 可选:为 Client 端额外声明 UI 钩子(若仅使用工具层可不填)
+      # Client:
+      #   theme: auto
+      #   shortcut: "/research"
+
+    # --- 其他插件示例 ---------------------------------------------------------
+    # 演示其他插件如何通过 ctx.inject 消费 InsightForge 服务
+    # other-plugin:
+    #   $: some-other-plugin
+    #   inject: ['insightforge/demand']
+
+# ---------------------------------------------------------------------
+# 客户端(浏览器)配置
+# ---------------------------------------------------------------------
+client:
+  # 浏览器侧入口 - dsh web 启动时会加载这些资源
+  bundles:
+    # 将 dist/client.js 作为 IIFE 注入到前端 window.insightforgeClient
+    - src: insightforge-dsh-plugin/client
+      name: insightforge-client
+      mount: window.insightforgeClient
+      autoInject: true
+
+# ---------------------------------------------------------------------
+# 高级:个性化 Profile(可选)
+# ---------------------------------------------------------------------
+# Profile 机制允许针对不同场景切换配置,例如个人开发 vs CI 环境
+# profiles:
+#   ci:
+#     plugins:
+#       insightforge-plugin:
+#         Config:
+#           cacheEnabled: false
+#           maxConcurrent: 16
+#
+# 使用方式: `dsh web --profile ci`
+
+# ---------------------------------------------------------------------
+# 高级:Webhook 通知(可选)
+# ---------------------------------------------------------------------
+# webhooks:
+#   onResearchComplete:
+#     url: ${RESEARCH_WEBHOOK_URL}
+#     method: POST
+#     body:
+#       reportId: '{{result.id}}'
+#       depth: '{{result.depth}}'

@@ -1,0 +1,65 @@
+{
+  "summary": "AI 会议纪要工具市场中等热度,主要面向远程团队。当前已有 Otter.ai、Fireflies.ai 等成熟产品占据先发优势,但中文场景下存在明显差异化空间。",
+  "market_heat": {
+    "search_volume": 8500,
+    "discussion_count": 220,
+    "trend": "rising",
+    "heat_score": 68
+  },
+  "competitors": [
+    {
+      "name": "Otter.ai",
+      "description": "英文会议实时转录与摘要领域的领导者",
+      "url": "https://otter.ai",
+      "strengths": ["英文识别准确率高", "集成 Zoom/Meet 等平台"],
+      "weaknesses": ["中文支持弱", "企业版价格高"]
+    },
+    {
+      "name": "Fireflies.ai",
+      "description": "AI 会议助手,支持多平台集成与知识库",
+      "url": "https://fireflies.ai",
+      "strengths": ["Slack/CRM 集成", "团队协作功能完善"],
+      "weaknesses": ["学习曲线陡", "免费额度受限"]
+    },
+    {
+      "name": "飞书妙记",
+      "description": "字节跳动旗下面向中文场景的会议纪要工具",
+      "url": "https://www.feishu.cn/product/minutes",
+      "strengths": ["中文识别优秀", "与飞书生态深度整合"],
+      "weaknesses": ["海外用户体验差", "API 开放程度有限"]
+    }
+  ],
+  "pain_points": [
+    "中文会议转录准确率不足",
+    "会议结束后要点分散在多个文档中",
+    "跨语言团队需要双语纪要",
+    "搜索历史会议内容困难",
+    "行动项追踪缺失"
+  ],
+  "market_size": "约 15-25 亿元,远程办公与 AI 工具交叉市场",
+  "risks": [
+    "巨头生态绑定(钉钉、飞书、企业微信)",
+    "大模型 API 成本上升",
+    "用户隐私与合规要求"
+  ],
+  "opportunities": [
+    "中文场景垂直优化是差异化点",
+    "AI 行动项追踪可显著提升 ROI",
+    "可与项目管理工具集成形成闭环"
+  ],
+  "sources": [
+    {
+      "title": "Best AI Meeting Assistants in 2026 - Reddit",
+      "url": "https://www.reddit.com/r/productivity/comments/example1",
+      "source": "reddit"
+    },
+    {
+      "title": "Show HN: Meeting AI agent",
+      "url": "https://news.ycombinator.com/item?id=example2",
+      "source": "hackernews"
+    }
+  ],
+  "depth": "standard",
+  "keywords": ["AI meeting notes", "会议纪要 AI", "meeting transcription"],
+  "generated_at": "2026-08-19T12:00:00.000Z"
+}

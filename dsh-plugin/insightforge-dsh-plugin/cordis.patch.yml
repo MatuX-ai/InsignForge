@@ -1,0 +1,22 @@
+# ============================================================
+# Bundle 层 Patch - 文档 4.5 节 / 5.2 节
+#
+# 作用:将本插件挂载到 dsh 的 profile 组合层(profile combination layer)
+# 用户执行 `dsh plugin add insightforge-dsh-plugin` 后,本 patch 会
+# 自动被 dsh runtime 读取并合并到 cordis.yml 中,无需手工配置。
+#
+# 字段说明:
+# - plugins.insightforge-plugin.$: 插件入口,指向 node_modules 中的包
+# - plugins.insightforge-plugin.Config: 可选,允许 bundle 层覆盖默认值
+# ============================================================
+
+plugins:
+  insightforge-plugin:
+    $: insightforge-dsh-plugin
+    # 用户的 cordis.yml 中可再次覆盖以下配置(典型覆盖项为 llmApiKey)
+    # 此处仅为声明示例,真实部署请通过环境变量或 cordis.yml 注入
+    Config:
+      llmProvider: deepseek
+      searchProvider: openserp
+      cacheEnabled: true
+      maxConcurrent: 5
