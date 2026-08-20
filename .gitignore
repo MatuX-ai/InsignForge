@@ -1,6 +1,9 @@
 # ---------- 依赖 ----------
 **/node_modules/
 **/package-lock.json.bak
+# monorepo 顶层 lock 必须跟踪;子包旧 lock 由 npm workspaces 协调
+packages/**/package-lock.json
+dsh-plugin/**/package-lock.json
 
 # ---------- 构建产物 ----------
 **/dist/
@@ -82,3 +85,12 @@ crawler/screenshots/
 
 # ---------- 项目级特殊文件 ----------
 workflow/
+
+# ---------- monorepo 顶层 ----------
+# packages/* 子目录的构建产物已由 **/dist/ 覆盖,这里仅补充
+packages/*/coverage/
+packages/*/.tsbuildinfo
+packages/*/src/**/*.js.map
+# monorepo 顶层 build.log 排除
+/build.log
+/build-*.log
