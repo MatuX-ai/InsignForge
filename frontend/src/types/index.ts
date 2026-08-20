@@ -90,7 +90,21 @@ export interface ResearchStatus {
     current_step: string;
     started_at: string;
     finished_at: string | null;
+    /** 业务错误码(如 MISSING_API_KEY),供前端决定是否弹窗引导 */
+    error_code: ErrorCode | null;
   };
+}
+
+/** 业务错误码(与后端 backend/src/types/index.ts 保持一致) */
+export type ErrorCode = 'MISSING_API_KEY' | 'INTERNAL_ERROR';
+
+/** LLM 配置状态(后端 /api/v1/settings/llm 返回) */
+export interface LlmStatus {
+  provider: 'deepseek' | 'openai' | 'ollama';
+  model: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  runtimeOverride: boolean;
 }
 
 /** 触发调研响应 */

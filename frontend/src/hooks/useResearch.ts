@@ -4,13 +4,15 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
-import type { MarketReport, ResearchStatus } from '../types';
+import type { MarketReport, ResearchStatus, ErrorCode } from '../types';
 
 interface UseResearchReturn {
   status: ResearchStatus | null;
   report: MarketReport | null;
   loading: boolean;
   error: string | null;
+  /** 业务错误码(如 MISSING_API_KEY),与 error 同步出现 */
+  errorCode: ErrorCode | null;
   trigger: (projectId: string) => Promise<void>;
   reset: () => void;
 }
@@ -22,6 +24,7 @@ export function useResearch(): UseResearchReturn {
   const [report, setReport] = useState<MarketReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
   const projectIdRef = useRef<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
@@ -37,6 +40,7 @@ export function useResearch(): UseResearchReturn {
     setStatus(null);
     setReport(null);
     setError(null);
+    setErrorCode(null);
     setLoading(false);
     projectIdRef.current = null;
   }, [stop]);
@@ -54,12 +58,14 @@ export function useResearch(): UseResearchReturn {
         stop();
         setLoading(false);
       } else if (s.execution.status === 'failed') {
+        setErrorCode(s.execution.error_code ?? 'INTERNAL_ERROR');
         setError('调研失败,请重试');
         stop();
         setLoading(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setErrorCode(null);
       stop();
       setLoading(false);
     }
@@ -77,6 +83,7 @@ export function useResearch(): UseResearchReturn {
         timerRef.current = window.setInterval(poll, POLL_INTERVAL);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
+        setErrorCode(null);
         setLoading(false);
       }
     },
@@ -86,5 +93,5 @@ export function useResearch(): UseResearchReturn {
   // 卸载时清理
   useEffect(() => stop, [stop]);
 
-  return { status, report, loading, error, trigger, reset };
+  return { status, report, loading, error, errorCode, trigger, reset };
 }

@@ -7,6 +7,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { StatusBadge } from '../components/StatusBadge';
+import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
 import type { MarketReport, Project } from '../types';
@@ -17,7 +18,7 @@ export function Report() {
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const { status, report, loading, error, trigger, reset } = useResearch();
+  const { status, report, loading, error, errorCode, trigger, reset } = useResearch();
 
   useEffect(() => {
     if (!id) return;
@@ -276,6 +277,15 @@ export function Report() {
           </div>
         </Card>
       )}
+
+      <LlmSetupPrompt
+        open={!loading && errorCode === 'MISSING_API_KEY'}
+        errorCode={errorCode}
+        onClose={() => {
+          reset();
+        }}
+        onGoSettings={() => navigate('/settings')}
+      />
     </main>
   );
 }

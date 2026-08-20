@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Textarea } from '../components/Textarea';
+import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { useResearch } from '../hooks/useResearch';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { api } from '../lib/api';
@@ -21,8 +22,9 @@ export function Home() {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [, setHistory] = useLocalStorage<HistoryEntry[]>('history', []);
-  const { trigger, loading, error: researchError, status } = useResearch();
+  const { trigger, loading, error: researchError, errorCode, status } = useResearch();
   const navigate = useNavigate();
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const canSubmit = value.trim().length >= 5 && !loading;
 
@@ -50,6 +52,8 @@ export function Home() {
   };
 
   const showError = error ?? researchError;
+  const showSetupModal =
+    !loading && (errorCode === 'MISSING_API_KEY' || setupOpen);
 
   return (
     <main className="flex-1 flex items-center justify-center px-6 py-12">
@@ -102,6 +106,13 @@ export function Home() {
           </div>
         )}
       </div>
+
+      <LlmSetupPrompt
+        open={showSetupModal}
+        errorCode={errorCode}
+        onClose={() => setSetupOpen(false)}
+        onGoSettings={() => navigate('/settings')}
+      />
     </main>
   );
 }
