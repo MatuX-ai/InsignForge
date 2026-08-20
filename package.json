@@ -1,0 +1,30 @@
+{
+  "name": "insightforge-monorepo",
+  "version": "1.1.0",
+  "private": true,
+  "description": "InsightForge monorepo 根 —— 包含核心 SDK、backend、dsh 插件、frontend 等子包",
+  "workspaces": [
+    "packages/*",
+    "backend",
+    "frontend",
+    "dsh-plugin/insightforge-dsh-plugin"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:core": "npm run build --workspace=@insightforge/core",
+    "build:mcp": "npm run build --workspace=@insightforge/mcp-server",
+    "test": "npm run test --workspaces --if-present",
+    "test:core": "npm run test --workspace=@insightforge/core",
+    "test:mcp": "npm run test --workspace=@insightforge/mcp-server",
+    "verify:mcp": "npm run verify --workspace=@insightforge/mcp-server",
+    "smoke:mcp": "npm run smoke --workspace=@insightforge/mcp-server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

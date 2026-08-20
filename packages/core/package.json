@@ -1,0 +1,77 @@
+{
+  "name": "@insightforge/core",
+  "version": "0.1.0",
+  "description": "InsightForge 核心 SDK —— 市场调研算法、LLM/搜索客户端、SQLite 持久化、报告生成。框架无关,可被 dsh-plugin / backend / MCP-server 等任意上层复用。",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:types": "tsc -p tsconfig.types.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist .tsbuildinfo dist-types",
+    "verify": "node scripts/verify-bundle.mjs"
+  },
+  "keywords": [
+    "insightforge",
+    "market-research",
+    "ai-agent",
+    "sdk",
+    "deepseek",
+    "openai",
+    "ollama",
+    "mcp"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "openai": "^4.65.0",
+    "pino": "^9.4.0",
+    "zod": "^3.23.8"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^11.0.0 || ^12.0.0",
+    "openai": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": false
+    },
+    "openai": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.0",
+    "pino-pretty": "^11.2.2",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
