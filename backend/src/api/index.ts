@@ -6,6 +6,7 @@ import { projectsRouter } from './projects.js';
 import { researchRouter } from './research.js';
 import { landingRouter } from './landing.js';
 import { marketNeedsRouter } from './market-needs.js';
+import { settingsRouter } from './settings.js';
 
 export const apiRouter = Router();
 
@@ -15,3 +16,4 @@ apiRouter.use('/projects/:id/research', researchRouter);
 apiRouter.use('/projects/:id/landing', landingRouter);
 
 apiRouter.use('/market-needs', marketNeedsRouter);
+apiRouter.use('/settings', settingsRouter);

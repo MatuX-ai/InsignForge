@@ -87,6 +87,9 @@ export interface ProjectReport {
   generated_at: string;
 }
 
+/** 业务错误码 - 用于前端识别特定错误类型以决定是否弹窗引导 */
+export type ErrorCode = 'MISSING_API_KEY' | 'INTERNAL_ERROR';
+
 /** 执行记录 */
 export interface Execution {
   id: string;
@@ -97,6 +100,8 @@ export interface Execution {
   logs: Array<{ timestamp: string; level: string; message: string }>;
   started_at: string;
   finished_at: string | null;
+  /** 业务错误码(如 MISSING_API_KEY),供前端识别并弹窗 */
+  error_code?: ErrorCode;
 }
 
 /** API 统一响应包装 */

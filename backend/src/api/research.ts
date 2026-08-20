@@ -52,6 +52,7 @@ researchRouter.get(
         current_step: execution.current_step,
         started_at: execution.started_at,
         finished_at: execution.finished_at,
+        error_code: execution.error_code ?? null,
       },
     });
   })

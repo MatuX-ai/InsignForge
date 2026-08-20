@@ -11,6 +11,23 @@ import OpenAI from 'openai';
 import { config, getLlmApiKey, getLlmBaseUrl } from '../../config.js';
 import { logger } from '../../logger.js';
 
+/**
+ * 缺少 LLM API Key 时抛出的专用错误
+ * 用于上层统一识别并提示用户去设置页面配置
+ */
+export class MissingLlmApiKeyError extends Error {
+  readonly code = 'MISSING_API_KEY';
+  readonly provider: string;
+
+  constructor(provider: string) {
+    super(
+      `未配置 ${provider} 的 API Key,请前往「设置」页面填写,或在后端 .env 中配置 ${provider.toUpperCase()}_API_KEY 后重启服务`
+    );
+    this.name = 'MissingLlmApiKeyError';
+    this.provider = provider;
+  }
+}
+
 let _client: OpenAI | null = null;
 
 /**
@@ -25,6 +42,8 @@ function getClient(): OpenAI {
       { provider: config.LLM_PROVIDER },
       `${config.LLM_PROVIDER} 未配置 API Key,LLM 调用将失败`
     );
+    // 立即抛出,避免后续使用占位 key 浪费时间并污染日志
+    throw new MissingLlmApiKeyError(config.LLM_PROVIDER);
   }
 
   _client = new OpenAI({
@@ -34,6 +53,14 @@ function getClient(): OpenAI {
   });
 
   return _client;
+}
+
+/**
+ * 重置 LLM 客户端单例
+ * 在 API Key 通过前端/热更新接口更新后调用,使新 key 立即生效
+ */
+export function resetLlmClient(): void {
+  _client = null;
 }
 
 /** 简化消息类型 */
@@ -72,6 +99,14 @@ export async function chatComplete(
 
   if (options.jsonMode) {
     params.response_format = { type: 'json_object' };
+  }
+
+  // DeepSeek V4 默认开启思考模式,返回内容会写入 reasoning_content 而 content 为空
+  // InsightForge 是结构化 JSON 输出场景,不需要思考阶段,通过 extra_body 禁用思考
+  // 其他 provider(OpenAI / Ollama)忽略该字段不会出错
+  if (config.LLM_PROVIDER === 'deepseek') {
+    (params as unknown as { thinking?: { type: 'enabled' | 'disabled' } }).thinking =
+      { type: 'disabled' };
   }
 
   try {

@@ -92,4 +92,10 @@ export const ExecutionService = {
       `UPDATE executions SET status = ?, finished_at = datetime('now') WHERE id = ?`
     ).run(status, executionId);
   },
+
+  /** 设置业务错误码(仅内存态,不持久化) */
+  setErrorCode(executionId: string, errorCode: Execution['error_code']): void {
+    const exec = this.getById(executionId);
+    if (exec) exec.error_code = errorCode;
+  },
 };
