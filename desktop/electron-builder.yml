@@ -1,0 +1,49 @@
+# InsightForge 桌面版打包配置
+# 构建流程: build.mjs 负责编译后端/前端并组装 resources, 本文件负责 electron-builder 产物配置
+
+appId: ai.insightforge.desktop
+productName: InsightForge
+copyright: Copyright © 2026 InsightForge
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - main.cjs
+  - preload.cjs
+
+# 运行时资源(不打入 asar, 原样放到 resources/ 下)
+extraResources:
+  - from: resources/backend
+    to: backend
+    filter:
+      - "**/*"
+      - "!**/*.map"
+  - from: resources/frontend-dist
+    to: frontend-dist
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+  # 沙盒/CI 环境无符号链接权限时跳过 rcedit(图标随后续优化补充)
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: InsightForge
+
+portable:
+  artifactName: "${productName}-${version}-portable-${arch}.${ext}"
+
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
