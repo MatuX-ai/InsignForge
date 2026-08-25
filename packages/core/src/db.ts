@@ -22,9 +22,7 @@ let _db: Database.Database | null = null;
 export function getDb(config: Config): Database.Database {
   if (_db) return _db;
 
-  const dbPath = path.isAbsolute(config.dbPath)
-    ? config.dbPath
-    : path.resolve(process.cwd(), config.dbPath);
+  const dbPath = normalizeDbPath(config.dbPath);
   const dbDir = path.dirname(dbPath);
 
   if (!fs.existsSync(dbDir)) {
@@ -44,6 +42,16 @@ export function getDb(config: Config): Database.Database {
 
   logger.info('数据库表结构已就绪');
   return _db;
+}
+
+/**
+ * 解析 dbPath 为绝对路径,但保留 `:memory:` 等内存数据库 URI 原样。
+ * Windows 下 `path.resolve(cwd, ':memory:')` 会得到含冒号的非法文件名,
+ * 因此内存路径必须直接透传给 better-sqlite3。
+ */
+function normalizeDbPath(dbPath: string): string {
+  if (dbPath === ':memory:' || dbPath.startsWith('file:')) return dbPath;
+  return path.isAbsolute(dbPath) ? dbPath : path.resolve(process.cwd(), dbPath);
 }
 
 /** 关闭数据库(NFR-04) */
@@ -66,12 +74,10 @@ export function closeDb(): void {
  */
 export function hasSqliteBindings(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Database = require('better-sqlite3');
-    // 真正实例化一次,触发 binding 加载
+    // 直接用模块顶部 import 的 Database 探测绑定(ESM 下没有全局 require,
+    // 之前用 require 会导致 ESM 运行时永远判定绑定不可用)
     const probe = new Database(':memory:');
     probe.close();
-    void Database; // 标记使用
     return true;
   } catch {
     return false;
@@ -87,9 +93,7 @@ export function inspectDatabase(config: Config): {
   hasMarketNeeds: boolean;
   hasFts: boolean;
 } {
-  const dbPath = path.isAbsolute(config.dbPath)
-    ? config.dbPath
-    : path.resolve(process.cwd(), config.dbPath);
+  const dbPath = normalizeDbPath(config.dbPath);
 
   const exists = fs.existsSync(dbPath);
   if (!exists) return { exists: false, hasMarketNeeds: false, hasFts: false };

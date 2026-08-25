@@ -1,0 +1,25 @@
+{
+  "name": "insightforge-desktop",
+  "version": "1.0.2",
+  "description": "InsightForge 桌面版 - 本地市场验证工具箱",
+  "main": "main.cjs",
+  "private": true,
+  "author": {
+    "name": "InsightForge Team",
+    "email": "team@insightforge.local"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "electron .",
+    "dist": "node build.mjs && electron-builder --win",
+    "pack": "node build.mjs && electron-builder --dir"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^24.13.3"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

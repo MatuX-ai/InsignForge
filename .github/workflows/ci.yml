@@ -1,0 +1,90 @@
+# InsightForge CI —— 每次提交自动运行测试
+#
+# 触发: 任意分支 push / PR
+# 内容:
+#   - test   : 单元测试 + 类型检查 + 构建 + 产物校验 + MCP 冒烟 + 端到端冒烟 + 官网构建
+#   - desktop: 桌面版构建(electron-builder) + 桌面冒烟测试
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ================= 核心测试 =================
+  test:
+    name: 单元测试 / 类型检查 / 构建 / 冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖 (workspaces)
+        run: npm ci
+
+      - name: 类型检查 (所有 workspace)
+        run: npm run typecheck
+
+      - name: 单元测试 (core / mcp / backend / dsh)
+        run: npm test
+
+      - name: 构建 (core / mcp / backend / frontend / dsh)
+        run: npm run build
+
+      - name: 构建产物校验
+        run: |
+          npm run verify --workspace=@insightforge/core
+          npm run verify --workspace=@insightforge/mcp-server
+          npm run verify --workspace=insightforge-dsh-plugin
+
+      - name: MCP server 冒烟测试 (stdio + HTTP)
+        run: npm run smoke --workspace=@insightforge/mcp-server
+
+      - name: 构建官网 (website)
+        run: |
+          cd website
+          npm ci
+          npm run build
+
+      - name: 端到端冒烟测试 (真实启动 backend)
+        run: node scripts/e2e-smoke.mjs
+
+  # ================= 桌面版 =================
+  desktop:
+    name: 桌面版构建 + 冒烟
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 workspace 依赖 (backend/frontend 构建所需)
+        run: npm ci
+
+      - name: 安装桌面版依赖 (electron + electron-builder)
+        run: npm ci
+        working-directory: desktop
+
+      - name: 桌面版构建 (编译 + resources 组装 + electron-builder --dir)
+        run: npm run build
+        working-directory: desktop
+
+      - name: 桌面版冒烟测试
+        run: node scripts/smoke-test.mjs
+        working-directory: desktop

@@ -98,20 +98,31 @@ async function runHttpHealth(port) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stderr = '';
+    child.on('spawn', () => console.log(`  [http] child spawned pid=${child.pid}`));
+    child.on('error', (e) => console.log(`  [http] child error: ${e.message}`));
     child.stderr.on('data', (d) => (stderr += d.toString()));
     child.stdout.on('data', (d) => (stderr += d.toString()));
 
-    setTimeout(async () => {
+    // 轮询 /health 直到服务就绪(避免固定延时在不同机器上过紧)
+    const deadline = Date.now() + 10_000;
+    const tryFetch = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/health`);
+        const res = await fetch(`http://127.0.0.1:${port}/health`, {
+          signal: AbortSignal.timeout(1500),
+        });
         const text = await res.text();
         child.kill();
         resolveTest({ ok: res.ok, status: res.status, body: text, stderr });
       } catch (e) {
-        child.kill();
-        resolveTest({ ok: false, error: String(e), stderr });
+        if (Date.now() > deadline) {
+          child.kill();
+          resolveTest({ ok: false, error: String(e), stderr });
+          return;
+        }
+        setTimeout(tryFetch, 300);
       }
-    }, 1500);
+    };
+    tryFetch();
   });
 }
 
@@ -140,6 +151,10 @@ const port = 53127 + Math.floor(Math.random() * 100);
 const r3 = await runHttpHealth(port);
 console.log(`  status = ${r3.status ?? 'N/A'}`);
 console.log(`  body = ${(r3.body ?? '').slice(0, 200)}`);
+if (!r3.ok) {
+  console.log(`  error = ${r3.error ?? 'N/A'}`);
+  console.log(`  child output = ${(r3.stderr ?? '').slice(0, 600)}`);
+}
 console.log(r3.ok ? '  ✓ PASS' : '  ✗ FAIL');
 
 console.log('\n=== smoke test done ===');

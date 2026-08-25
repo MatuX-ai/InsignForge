@@ -1,5 +1,11 @@
 # InsightForge 桌面版打包配置
 # 构建流程: build.mjs 负责编译后端/前端并组装 resources, 本文件负责 electron-builder 产物配置
+#
+# ⚠️ extraResources.filter 的语义:
+#   electron-builder 把 filter 当作白名单集合传给 minimatch,
+#   不带 ! 前缀的项是"必须匹配才能复制"的模式;
+#   因此必须以 '**/*' 作为第一项明确表示"先全部包含",
+#   再用 ! 前缀列出需要剔除的文件, 否则非 .map/.md 等文件会全部丢失.
 
 appId: ai.insightforge.desktop
 productName: InsightForge
@@ -18,10 +24,48 @@ extraResources:
   - from: resources/backend
     to: backend
     filter:
+      # --- 白名单: 包含所有文件 ---
       - "**/*"
+      # --- 黑名单: 剔除无意义产物 ---
+      # 文档 / 源码映射 / 编译中间产物
+      - "!**/*.md"
       - "!**/*.map"
+      - "!**/*.tsbuildinfo"
+      - "!**/*.c"
+      - "!**/*.h"
+      - "!**/*.d.ts"
+      - "!**/*.d.ts.map"
+      - "!**/README*"
+      - "!**/CHANGELOG*"
+      - "!**/LICENSE*"
+      # 测试 / 覆盖率
+      - "!**/test/**"
+      - "!**/__tests__/**"
+      - "!**/tests/**"
+      - "!**/coverage/**"
+      - "!**/*.test.*"
+      - "!**/*.spec.*"
+      # 编辑器 / 构建 / Lock
+      - "!**/.eslintrc*"
+      - "!**/.prettierrc*"
+      - "!**/.editorconfig"
+      - "!**/.npmignore"
+      - "!**/.gitignore"
+      # puppeteer-core 默认会下载 Chromium, 桌面版用系统浏览器, 跳过 .local-chromium
+      - "!**/.local-chromium/**"
+      - "!**/node_modules/puppeteer/.local-chromium/**"
+      # node_modules 内不必要的元数据
+      - "!**/node_modules/.package-lock.json"
+      - "!**/node_modules/.cache/**"
+      - "!**/node_modules/.bin/*.cmd"
   - from: resources/frontend-dist
     to: frontend-dist
+
+# 顶层 compression: 控制 asar 压缩等级(仅当启用 asar 时生效;
+# 本项目 main.cjs 是文件模式不打 asar,因此实际减小靠的是:
+#   1) extraResources 的 file filter 严格过滤
+#   2) backend 包移除 @mastra/core 等冗余依赖)
+# 如未来主进程改用 asar,这里改 maximum 即可生效。
 
 win:
   target:
@@ -38,9 +82,12 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  allowElevation: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: InsightForge
+  # 顶层 compression(默认 normal) 控制安装包整体压缩; NSIS 默认即 LZMA,
+  # 不在 nsis 段单独配置 compression (24.x 已移除该字段)
 
 portable:
   artifactName: "${productName}-${version}-portable-${arch}.${ext}"
