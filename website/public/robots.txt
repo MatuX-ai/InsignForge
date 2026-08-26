@@ -1,0 +1,13 @@
+/**
+ * SEO / 部署相关静态配置文件
+ * robots.txt  sitemap.xml
+ * 注:Vite 会把 public/ 下所有文件原样拷贝到 dist 根
+ */
+
+# robots.txt
+# InsightForge 营销站 - 允许全站抓取,链接指向 sitemap
+User-agent: *
+Allow: /
+Disallow:
+
+Sitemap: https://insightforge.dev/sitemap.xml

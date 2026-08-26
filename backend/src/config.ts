@@ -33,6 +33,11 @@ const envSchema = z.object({
   // 其他
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   RESEARCH_TIMEOUT: z.coerce.number().default(300),
+  // 历史文档自动归档目录(桌面模式由 main.cjs 注入,默认项目根/历史文档)
+  HISTORY_DOC_DIR: z.string().optional(),
+  // 讨论 AI 调研的 MCP 通道:配置启动命令(如 "npx -y @insightforge/mcp-server")后,
+  // 讨论梳理中的营销调研将优先通过 MCP server 执行;未配置则回退到后端直连调研服务
+  INSIGHTFORGE_MCP_COMMAND: z.string().optional(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -47,6 +52,10 @@ export const config = {
   DATABASE_PATH: path.resolve(__dirname, '..', parsedEnv.data.DATABASE_URL.replace(/^sqlite:/, '')),
   BACKEND_DIR: path.resolve(__dirname, '..'),
   PROJECT_ROOT: path.resolve(__dirname, '..', '..'),
+  // 历史文档归档根目录(桌面模式 main.cjs 注入,开发模式回退到项目根/历史文档)
+  HISTORY_DOC_DIR: parsedEnv.data.HISTORY_DOC_DIR
+    ? path.resolve(parsedEnv.data.HISTORY_DOC_DIR)
+    : path.resolve(__dirname, '..', '..', '历史文档'),
 } as const;
 
 // 派生计算 LLM API Key

@@ -94,3 +94,7 @@ packages/*/src/**/*.js.map
 # monorepo 顶层 build.log 排除
 /build.log
 /build-*.log
+# 桌面版打包缓存与临时脚本
+patch_bs.cjs
+desktop/dist/
+desktop/win-unpacked/

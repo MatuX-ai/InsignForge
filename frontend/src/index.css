@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 全局样式 - 严格按前端设计文档 §2.3 */
+/* ===== 全局样式 - 深色玻璃拟态主题 ===== */
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -11,13 +11,72 @@ html, body, #root {
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  color: #111827;
-  background-color: #F8FAFC;
+  color: #F1F5F9;
+  background-color: #0F172A;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
+  overflow-x: hidden;
 }
 
-/* 加载动画:命令行风格的三点闪烁(替代转圈动画) */
+/* 背景装饰光晕 - 营造科技感氛围 */
+body::before {
+  content: '';
+  position: fixed;
+  top: -20%;
+  left: -10%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  animation: float 8s ease-in-out infinite;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -20%;
+  right: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(167, 139, 250, 0.12) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  animation: float 10s ease-in-out infinite reverse;
+}
+
+/* 确保内容在光晕之上 */
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+/* 浮动动画 */
+@keyframes float {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(30px, -30px); }
+}
+
+/* 玻璃拟态通用类 */
+.glass {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.glass-light {
+  background: rgba(51, 65, 85, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+/* 加载动画:命令行风格的三点闪烁 */
 @keyframes terminal-blink {
   0%, 20% { opacity: 0.2; }
   40% { opacity: 1; }
@@ -28,7 +87,145 @@ body {
 .dot-2 { animation: terminal-blink 1.4s infinite 0.2s; }
 .dot-3 { animation: terminal-blink 1.4s infinite 0.4s; }
 
-/* 滚动条美化 */
+/* 滚动条美化 - 深色主题 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 选中文本颜色 */
+::selection {
+  background: rgba(99, 102, 241, 0.4);
+  color: #F1F5F9;
+}
+
+/* 输入框占位符 */
+input::placeholder,
+textarea::placeholder {
+  color: #64748B !important;
+}
+
+/* ===== 报告导出: 浏览器原生打印的 PDF 样式 =====
+ * 打印时使用浅色主题,确保输出清晰
+ */
+@media print {
+  html, body {
+    background-color: #ffffff !important;
+    color: #111827;
+    font-size: 11.5px;
+    line-height: 1.65;
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+      "Source Han Sans CN", "Noto Sans CJK SC", "WenQuanYi Micro Hei",
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+
+  /* 隐藏背景光晕 */
+  body::before,
+  body::after {
+    display: none !important;
+  }
+
+  /* 隐藏不打印元素 */
+  .no-print,
+  header,
+  footer,
+  aside {
+    display: none !important;
+  }
+
+  /* 卡片样式:浅色背景 + 细边框 */
+  .bg-card,
+  [class*="bg-card"] {
+    background-color: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: none !important;
+    border-radius: 4px !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* 标题样式优化 */
+  h1 {
+    font-size: 22px !important;
+    color: #1d4ed8 !important;
+    border-bottom: 2px solid #1d4ed8 !important;
+    padding-bottom: 8px !important;
+    margin-bottom: 16px !important;
+  }
+
+  h2 {
+    font-size: 15px !important;
+    color: #1f2937 !important;
+    border-left: 3px solid #1d4ed8 !important;
+    padding-left: 8px !important;
+    margin-top: 22px !important;
+    margin-bottom: 8px !important;
+  }
+
+  h3 {
+    font-size: 13px !important;
+    color: #111827 !important;
+  }
+
+  /* 避免章节标题被孤立在页尾 */
+  h2, h3 {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  ul, ol {
+    page-break-before: avoid !important;
+    break-before: avoid !important;
+  }
+
+  /* 表格打印优化 */
+  table {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* 手动设置适合 A4 输出的页边距 */
+  @page {
+    size: A4;
+    margin: 14mm 16mm;
+  }
+
+  /* 标记主容器作为打印根 */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* 打印时移除 flex 布局的侧边栏影响 */
+  .flex-1.flex {
+    display: block !important;
+  }
+
+  /* 热度卡片打印样式 */
+  .heat-card,
+  [class*="heat-card"] {
+    text-align: center !important;
+  }
+
+  /* 可行性评分环形图打印时确保可见 */
+  svg {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* 确保颜色在打印时保留 */
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}

@@ -4,14 +4,30 @@
 
 完全本地化、一键 Docker 启动的市场验证工具箱。在 5 分钟内把一个模糊的产品想法变成有数据支撑的市场报告。
 
+**🌐 官网与下载:[insightforge.dev](https://insightforge.dev)**(参见 [`website/`](./website) 目录)
+
 ## 特性
 
 - **零云依赖**: 所有数据存储在本地 SQLite,无需注册任何平台
 - **极简操作**: 输入一句话想法,自动生成 7 章节市场报告
 - **智能聚合**: 集成 OpenSerp 搜索 + Reddit / Hacker News 社区讨论
 - **结构化报告**: 市场热度、竞品识别、用户痛点、市场规模、风险机会、数据来源
+- **多渠道分发**: Web(Docker)、桌面版(NSIS 安装包/便携版)、DeepSeek Harness 插件、MCP Server
 
 ## 快速开始
+
+### 桌面版(Windows 推荐)
+
+无需 Docker 与 Node.js 环境,下载即用:
+
+| 产物 | 说明 |
+|------|------|
+| `InsightForge-1.0.0-x64.exe` | NSIS 安装程序,支持选择安装目录、创建桌面/开始菜单快捷方式 |
+| `InsightForge-1.0.0-portable-x64.exe` | 便携版,双击直接运行,免安装 |
+
+- 应用内置后端子进程,自动使用随机端口,不与本机其他服务冲突
+- 数据与配置写入用户目录(`%APPDATA%\InsightForge`),卸载/删除后不残留
+- 首次使用需在「设置」页填入 DeepSeek 或 OpenAI API Key
 
 ### 前提条件
 
@@ -19,7 +35,7 @@
 - (可选) Node.js ≥ 22,用于本地开发模式
 - DeepSeek 或 OpenAI API Key (二选一)
 
-### 一键启动
+### 一键启动(Docker)
 
 ```bash
 # 1. 克隆并进入目录(SSH)
@@ -66,6 +82,7 @@ npm run dev
 
 ```
 insightforge/
+├── desktop/           Electron 桌面版 (main.cjs + electron-builder 配置)
 ├── frontend/          React 18 + Vite + Tailwind,端口 3000
 ├── backend/           Node.js + Express + Mastra + SQLite,端口 3001
 ├── workflow/          Workflow Automation MVP,端口 5678 (预留)
@@ -77,6 +94,25 @@ insightforge/
 ├── .env.example       环境变量模板
 └── README.md          本文件
 ```
+
+## 构建桌面版(开发)
+
+```bash
+# 1. 安装根依赖(构建脚本依赖)
+npm install
+
+# 2. 构建桌面版(编译后端/前端 + 组装 resources + 打包安装程序)
+cd desktop
+npm install
+npm run dist          # 产物输出到 desktop/dist/*.exe
+
+# 仅生成免安装目录(快速验证)
+npm run pack
+```
+
+- `desktop/build.mjs`: 编译后端与前端,组装 `desktop/resources/{backend,frontend-dist}`
+- `desktop/electron-builder.yml`: 安装包/便携版产物配置
+- 打包需联网下载 electron 二进制与 NSIS 工具(已配置 npmmirror 镜像加速)
 
 ## 使用流程
 
@@ -122,6 +158,7 @@ insightforge/
 | 报告生成超时 | 调整 `RESEARCH_TIMEOUT`;检查网络 |
 | OpenSerp 无数据 | 访问 `http://localhost:8080` 确认服务存活 |
 | Docker 启动失败 | `docker-compose logs backend` 查看详情 |
+| 桌面版无法启动 | 查看 `%APPDATA%\InsightForge` 下日志与 `.env`;确认无残留进程后重试 |
 
 ## 开发路线
 

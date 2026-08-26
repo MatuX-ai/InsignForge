@@ -1,6 +1,6 @@
 /**
- * 底部导航 - 项目资源入口
- * readme | GitHub 仓库 | DeepSeek Harness 插件 | 常见问题
+ * 底部导航 - 深色玻璃拟态主题
+ * 项目资源入口
  */
 import { Link, useLocation } from 'react-router-dom';
 
@@ -26,12 +26,12 @@ const items: Item[] = [
 export function BottomBar() {
   const location = useLocation();
   return (
-    <footer className="h-12 bg-card border-t border-border flex items-center justify-center px-6 text-helper text-text-secondary">
+    <footer className="h-12 bg-card/60 backdrop-blur-xl border-t border-border flex items-center justify-center px-6 text-helper text-text-tertiary">
       <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1">
         {items.map((item, idx) => {
           const sep =
             idx > 0 ? (
-              <span key={`sep-${idx}`} className="text-border select-none">
+              <span key={`sep-${idx}`} className="text-border-solid select-none">
                 |
               </span>
             ) : null;
@@ -44,7 +44,7 @@ export function BottomBar() {
                   to={item.path}
                   className={`transition-colors ${
                     active
-                      ? 'text-primary font-medium'
+                      ? 'text-primary-light font-medium'
                       : 'hover:text-text-primary'
                   }`}
                 >

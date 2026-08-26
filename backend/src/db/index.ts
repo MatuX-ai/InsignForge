@@ -35,7 +35,26 @@ export function getDb(): Database.Database {
   _db.pragma('foreign_keys = ON');
   _db.pragma('synchronous = NORMAL');
 
-  // 建表
+  // 轻量迁移:旧库的 discussion_sessions 表没有 project_id 字段时补齐。
+  // 必须在执行 SCHEMA_SQL 之前完成——SCHEMA_SQL 里的 idx_discussions_project 索引
+  // 依赖 project_id 列,若旧表缺列而先建索引会直接崩溃。
+  // CREATE TABLE IF NOT EXISTS 不会修改已存在的表,因此需显式 ALTER。
+  const hasDiscussionTable = (
+    _db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='discussion_sessions'`)
+      .get() as { name: string } | undefined
+  ) !== undefined;
+  if (hasDiscussionTable) {
+    const discussionCols = _db
+      .prepare(`PRAGMA table_info(discussion_sessions)`)
+      .all() as Array<{ name: string }>;
+    if (!discussionCols.some((c) => c.name === 'project_id')) {
+      _db.exec(`ALTER TABLE discussion_sessions ADD COLUMN project_id TEXT`);
+      logger.info('数据库迁移:discussion_sessions 已新增 project_id 字段');
+    }
+  }
+
+  // 建表(含讨论表 project_id 列与索引;旧库由上方迁移补齐后,CREATE IF NOT EXISTS 均为空操作)
   _db.exec(SCHEMA_SQL);
   _db.exec(FTS_SCHEMA_SQL);
 

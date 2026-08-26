@@ -105,6 +105,17 @@ export interface LlmStatus {
   baseUrl: string;
   hasApiKey: boolean;
   runtimeOverride: boolean;
+  /** 当前生效 provider 的 key 掩码(如 sk-****1234),用于设置页回显确认 */
+  apiKeyMask: string;
+  /** 各 provider 是否已配置 key(用于指示器状态展示) */
+  providerKeyMap: Record<'deepseek' | 'openai' | 'ollama', boolean>;
+}
+
+/** LLM 预设模型选项(用于下拉选择) */
+export interface LlmModelOption {
+  provider: 'deepseek' | 'openai' | 'ollama';
+  model: string;
+  label: string;
 }
 
 /** 触发调研响应 */
@@ -112,6 +123,142 @@ export interface TriggerResearchResponse {
   execution_id: string;
   status: ExecutionStatus;
   estimated_time: number;
+}
+
+/** 文档版本 */
+export type DocVersion = 'mvp' | 'full';
+
+/** 开发文档生成任务状态(后端 /projects/:id/docs/status 返回) */
+export type DocsJobStatus = 'running' | 'success' | 'failed';
+
+export interface DocsJob {
+  status: DocsJobStatus;
+  /** 人类可读当前步骤,前端轮询展示 */
+  current_step: string;
+  progress: number;
+  total: number;
+  /** 文档版本: mvp / full */
+  version: DocVersion;
+  started_at: string;
+  finished_at: string | null;
+  error_code: ErrorCode | null;
+  error_message: string | null;
+  filenames: string[];
+  /** 自动归档到"历史文档"目录后的绝对路径(供前端提示) */
+  archive_path: string | null;
+}
+
+// ---------- 技术选型相关类型 ----------
+
+export type TechSelectionStatus = 'running' | 'success' | 'failed';
+
+export interface TechOption {
+  name: string;
+  reason: string;
+  maturity: 'mature' | 'growing' | 'emerging';
+  community_score: number;
+  learning_curve: 'low' | 'medium' | 'high';
+}
+
+export interface TechStackPlan {
+  plan_id: 'plan_a' | 'plan_b' | 'plan_c';
+  plan_name: string;
+  tagline: string;
+  suitable_for: string;
+  frontend: TechOption;
+  backend: TechOption;
+  database: TechOption;
+  deployment: TechOption;
+  third_party: TechOption[];
+  pros: string[];
+  cons: string[];
+  estimated_weeks: number;
+}
+
+export interface TechSelectionJob {
+  status: TechSelectionStatus;
+  current_step: string;
+  started_at: string;
+  finished_at: string | null;
+  error_code: ErrorCode | null;
+  error_message: string | null;
+  result: {
+    recommended: 'plan_a' | 'plan_b' | 'plan_c';
+    plans: TechStackPlan[];
+    decision_dimensions: string[];
+  } | null;
+  selected_plan: 'plan_a' | 'plan_b' | 'plan_c' | null;
+}
+
+// ---------- 前端设计方案相关类型 ----------
+
+export type FrontendDesignStatus = 'running' | 'success' | 'failed';
+
+export interface FrontendDesignPlan {
+  plan_id: 'plan_a' | 'plan_b' | 'plan_c';
+  plan_name: string;
+  tagline: string;
+  suitable_for: string;
+  design_style: {
+    keywords: string[];
+    color_palette: {
+      primary: string;
+      secondary: string;
+      neutral: string;
+      accent?: string;
+    };
+    typography: string;
+    motion: string;
+  };
+  interaction_pattern: {
+    navigation: string;
+    core_flow: string;
+    info_architecture: string;
+  };
+  responsive_strategy: {
+    priority: 'mobile-first' | 'desktop-first' | 'equal';
+    breakpoints: string;
+    mobile_specific: string;
+  };
+  ui_library: {
+    name: string;
+    reason: string;
+  };
+  pros: string[];
+  cons: string[];
+}
+
+export interface FrontendDesignJob {
+  status: FrontendDesignStatus;
+  current_step: string;
+  started_at: string;
+  finished_at: string | null;
+  error_code: ErrorCode | null;
+  error_message: string | null;
+  result: {
+    recommended: 'plan_a' | 'plan_b' | 'plan_c';
+    plans: FrontendDesignPlan[];
+    decision_dimensions: string[];
+  } | null;
+  selected_plan: 'plan_a' | 'plan_b' | 'plan_c' | null;
+}
+
+/** 商业计划书生成任务状态(后端 /projects/:id/business-plan/status 返回) */
+export type BpJobStatus = 'running' | 'success' | 'failed';
+
+export interface BpJob {
+  status: BpJobStatus;
+  /** 人类可读当前步骤,前端轮询展示 */
+  current_step: string;
+  progress: number;
+  total: number;
+  started_at: string;
+  finished_at: string | null;
+  error_code: ErrorCode | null;
+  error_message: string | null;
+  filenames: string[];
+  /** 自动归档到"历史文档"目录后的绝对路径(供前端提示) */
+  archive_path: string | null;
 }
 
 /** API 统一响应 */
@@ -129,11 +276,100 @@ export interface HistoryEntry {
   created_at: string;
 }
 
+/** 历史文档归档条目(后端 /api/v1/archives 返回) */
+export interface HistoryArchiveEntry {
+  /** 项目归档文件夹绝对路径 */
+  dir: string;
+  /** 文件夹内文件名列表 */
+  files: string[];
+}
+
+/** 历史文档归档结构: 项目名 -> 归档条目 */
+export type HistoryArchives = Record<string, HistoryArchiveEntry>;
+
+/** 桌面端 preload 暴露的桥接能力(浏览器中为 undefined) */
+declare global {
+  interface Window {
+    insightforge?: {
+      appVersion: string;
+      platform: string;
+      isDesktop: boolean;
+      /** 用系统默认程序打开指定路径文件 */
+      openPath: (p: string) => Promise<{ ok: boolean; message?: string }>;
+    };
+  }
+}
+
 /** 应用设置(前端 localStorage) */
 export interface AppSettings {
   llmProvider: 'deepseek' | 'openai' | 'ollama';
   llmModel: string;
   searchProvider: 'openserp' | 'serpapi';
   searchUrl: string;
+  /** SerpAPI Key(需要更精准的实时市场数据时自行申请并填写) */
+  serpApiKey?: string;
   showApiKey: boolean;
+}
+
+// ---------- 讨论梳理画布 ----------
+
+/** 梳理模式: 商业模式画布 / 精益画布 / SWOT / 软件项目 / 自由头脑风暴 */
+export type DiscussionMode = 'business_model' | 'lean_canvas' | 'swot' | 'project' | 'free';
+
+/** 画布要点状态: 草稿 / 已确认 / 待澄清 */
+export type CanvasPointStatus = 'draft' | 'confirmed' | 'question';
+
+export interface CanvasPoint {
+  id: string;
+  text: string;
+  status: CanvasPointStatus;
+  note?: string;
+}
+
+export interface CanvasGroup {
+  id: string;
+  title: string;
+  points: CanvasPoint[];
+}
+
+export interface DiscussionCanvas {
+  groups: CanvasGroup[];
+}
+
+export interface DiscussionMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+export interface DiscussionSession {
+  id: string;
+  /** 关联的项目 ID(报告页"进一步探讨"等场景),无关联时为 null */
+  project_id: string | null;
+  title: string;
+  mode: DiscussionMode;
+  canvas: DiscussionCanvas;
+  messages: DiscussionMessage[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** 画布操作(与后端讨论共用) */
+export type DiscussionOp =
+  | { op: 'add_point'; group_id: string; text: string; note?: string; status?: CanvasPointStatus }
+  | { op: 'update_point'; point_id: string; text?: string; status?: CanvasPointStatus; note?: string }
+  | { op: 'delete_point'; point_id: string }
+  | { op: 'move_point'; point_id: string; to_group_id: string }
+  | { op: 'add_group'; title: string }
+  | { op: 'rename_group'; group_id: string; title: string }
+  | { op: 'delete_group'; group_id: string };
+
+/** 讨论任务状态(轮询) */
+export interface DiscussionChatJob {
+  status: ExecutionStatus;
+  current_step: string;
+  started_at: string;
+  finished_at: string | null;
+  error_code: ErrorCode | null;
+  error_message: string | null;
 }

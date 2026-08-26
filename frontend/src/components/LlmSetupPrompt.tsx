@@ -31,7 +31,7 @@ export function LlmSetupPrompt({ open, errorCode, onClose, onGoSettings }: Props
       </p>
       <p className="text-helper text-text-secondary">
         点击「前往设置」填写 API Key 后,新调用将立即生效,无需重启服务。
-        也可以在后端 <code className="px-1 bg-hover-bg rounded">.env</code> 中配置环境变量。
+        也可以在后端 <code className="px-1 bg-hover-bg rounded text-primary-light">.env</code> 中配置环境变量。
       </p>
     </Modal>
   );

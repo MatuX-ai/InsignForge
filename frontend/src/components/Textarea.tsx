@@ -1,5 +1,5 @@
 /**
- * 多行文本输入 - 按前端设计文档 §5.2
+ * 多行文本输入 - 深色玻璃拟态主题
  */
 import type { TextareaHTMLAttributes } from 'react';
 
@@ -16,15 +16,15 @@ export function Textarea({ showCount = true, className = '', value, maxLength, .
         value={value}
         maxLength={maxLength}
         className={
-          'w-full min-h-[120px] p-3 text-[15px] leading-6 text-text-primary ' +
-          'bg-card border border-border rounded resize-y ' +
-          'focus:outline-none focus:border-primary focus:ring-2 focus:ring-blue-100 ' +
-          'placeholder:text-text-secondary ' +
+          'w-full min-h-[120px] p-4 text-[15px] leading-6 text-text-primary ' +
+          'bg-card-solid/50 border border-border rounded-lg resize-y ' +
+          'focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 ' +
+          'placeholder:text-text-tertiary backdrop-blur-sm transition-all ' +
           className
         }
       />
       {showCount && maxLength && (
-        <div className="text-helper text-text-secondary text-right mt-1">
+        <div className="text-helper text-text-tertiary text-right mt-1">
           {length} / {maxLength}
         </div>
       )}

@@ -1,5 +1,5 @@
 /**
- * 首页 - 按前端设计文档 §3.1
+ * 首页 - 深色玻璃拟态主题
  * 垂直居中布局:大标题 + 输入框 + 主按钮 + 需求库链接
  */
 import { useState } from 'react';
@@ -33,7 +33,6 @@ export function Home() {
     setError(null);
     try {
       const project = await api.createProject(value.trim());
-      // 写入历史
       setHistory((prev) => [
         {
           project_id: project.id,
@@ -44,7 +43,6 @@ export function Home() {
         ...prev.filter((h) => h.project_id !== project.id),
       ].slice(0, 50));
       await trigger(project.id);
-      // 跳转报告页
       navigate(`/report/${project.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -58,50 +56,69 @@ export function Home() {
   return (
     <main className="flex-1 flex items-center justify-center px-6 py-12">
       <div className="w-full max-w-2xl flex flex-col items-center gap-8">
-        <h1 className="text-title text-text-primary">InsightForge</h1>
-        <p className="text-body text-text-secondary text-center -mt-4">
-          从一个想法到有数据支撑的市场报告,只需 5 分钟
-        </p>
+        {/* 标题区 */}
+        <div className="text-center">
+          <h1 className="text-title text-text-primary mb-2">
+            <span className="bg-gradient-to-r from-primary-light via-accent to-cyan bg-clip-text text-transparent">
+              InsightForge
+            </span>
+          </h1>
+          <p className="text-body text-text-secondary">
+            从一个想法到有数据支撑的市场报告,只需 5 分钟
+          </p>
+        </div>
 
-        <div className="w-full flex flex-col gap-3">
-          <Textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={PLACEHOLDER}
-            maxLength={500}
-          />
-          {showError && (
-            <div className="text-helper text-red-600">{showError}</div>
-          )}
-          <div className="flex flex-col items-center gap-4">
-            <Button onClick={submit} disabled={!canSubmit} loading={loading}>
-              验证想法
-            </Button>
-            <div className="flex gap-3 items-center text-helper text-text-secondary">
-              <button
-                type="button"
-                onClick={() => setValue(EXAMPLE)}
-                className="hover:text-primary hover:underline"
-              >
-                使用示例
-              </button>
-              <span className="text-border">|</span>
-              <a
-                href="/history"
-                className="hover:text-primary hover:underline"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate('/history');
+        {/* 输入区 - 玻璃拟态卡片 */}
+        <div className="w-full bg-card backdrop-blur-xl border border-border rounded-card p-6 shadow-glass">
+          <div className="w-full flex flex-col gap-4">
+            <Textarea
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={PLACEHOLDER}
+              maxLength={500}
+            />
+            {showError && (
+              <div className="text-helper text-red-400">{showError}</div>
+            )}
+            <div className="flex flex-col items-center gap-4">
+              <Button onClick={submit} disabled={!canSubmit} loading={loading}>
+                马上验证想法
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const q = value.trim();
+                  navigate(q ? `/discuss?q=${encodeURIComponent(q)}` : '/discuss');
                 }}
               >
-                或者从需求库找灵感 →
-              </a>
+                我还没有想清楚,需要探讨一下
+              </Button>
+              <div className="flex gap-3 items-center text-helper text-text-tertiary">
+                <button
+                  type="button"
+                  onClick={() => setValue(EXAMPLE)}
+                  className="hover:text-primary-light hover:underline transition-colors"
+                >
+                  使用示例
+                </button>
+                <span className="text-border-solid">|</span>
+                <a
+                  href="/history"
+                  className="hover:text-primary-light hover:underline transition-colors"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate('/history');
+                  }}
+                >
+                  或者从需求库找灵感 →
+                </a>
+              </div>
             </div>
           </div>
         </div>
 
         {loading && status && (
-          <div className="text-helper text-text-secondary mt-4">
+          <div className="text-helper text-text-secondary">
             {status.progress}
           </div>
         )}

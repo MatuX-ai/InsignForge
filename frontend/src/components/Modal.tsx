@@ -1,8 +1,8 @@
 /**
- * 通用弹窗组件 - 按前端设计文档 §3.4 风格
+ * 通用弹窗组件 - 深色玻璃拟态主题
  * - 居中模态 + 半透明遮罩
- * - 支持 ESC 关闭、点击遮罩关闭(可关闭)
- * - 支持自定义标题/正文/操作按钮
+ * - 支持 ESC 关闭、点击遮罩关闭
+ * - 支持 primary / warning 两种主题
  */
 import { useEffect, type ReactNode } from 'react';
 
@@ -11,15 +11,11 @@ interface Props {
   title: string;
   children: ReactNode;
   onClose: () => void;
-  /** 主要操作按钮文案(右侧) */
   primaryLabel?: string;
   onPrimary?: () => void;
-  /** 次要操作按钮文案(左侧) */
   secondaryLabel?: string;
   onSecondary?: () => void;
-  /** 是否允许点击遮罩关闭,默认 true */
   maskClosable?: boolean;
-  /** 主题色,默认主色;警告场景可用 warning */
   tone?: 'primary' | 'warning';
 }
 
@@ -35,7 +31,6 @@ export function Modal({
   maskClosable = true,
   tone = 'primary',
 }: Props) {
-  // ESC 关闭
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -49,8 +44,8 @@ export function Modal({
 
   const primaryClass =
     tone === 'warning'
-      ? 'bg-warning text-white hover:bg-amber-700 active:bg-amber-800'
-      : 'bg-primary text-white hover:bg-blue-700 active:bg-blue-800';
+      ? 'bg-gradient-to-r from-warning to-amber-600 text-white hover:from-amber-500 hover:to-amber-700 shadow-glow-sm'
+      : 'bg-gradient-to-r from-primary to-primary-dark text-white hover:from-primary-light hover:to-primary shadow-glow-sm';
 
   return (
     <div
@@ -61,12 +56,12 @@ export function Modal({
     >
       {/* 遮罩 */}
       <div
-        className="absolute inset-0 bg-black/40"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={maskClosable ? onClose : undefined}
       />
-      {/* 弹窗本体 */}
-      <div className="relative bg-card border border-border rounded-card shadow-xl w-full max-w-md p-6">
-        <h2 id="modal-title" className="text-section text-text-primary mb-3">
+      {/* 弹窗本体 - 玻璃拟态 */}
+      <div className="relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full max-w-md p-6">
+        <h2 id="modal-title" className="text-section text-text-primary mb-3 font-semibold">
           {title}
         </h2>
         <div className="text-body text-text-primary mb-6 space-y-2">
@@ -92,7 +87,7 @@ export function Modal({
                 onPrimary?.();
                 onClose();
               }}
-              className={`h-10 px-5 text-[15px] font-medium rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${primaryClass}`}
+              className={`h-10 px-5 text-[15px] font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40 ${primaryClass}`}
             >
               {primaryLabel}
             </button>

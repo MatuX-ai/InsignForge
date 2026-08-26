@@ -1,5 +1,6 @@
 /**
- * 通用按钮 - 按前端设计文档 §5.1 三种类型
+ * 通用按钮 - 深色玻璃拟态主题
+ * 三种变体: primary / outline / text
  */
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
@@ -12,10 +13,11 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-primary text-white hover:bg-blue-700 active:bg-blue-800',
+  primary:
+    'bg-gradient-to-r from-primary to-primary-dark text-white hover:from-primary-light hover:to-primary active:from-primary-dark active:to-primary-dark shadow-glow-sm hover:shadow-glow transition-all',
   outline:
-    'bg-transparent text-primary border border-primary hover:bg-blue-50 active:bg-blue-100',
-  text: 'bg-transparent text-primary hover:underline',
+    'bg-transparent text-primary border border-primary/50 hover:bg-primary/10 hover:border-primary active:bg-primary/20 backdrop-blur-sm transition-all',
+  text: 'bg-transparent text-primary hover:text-primary-light hover:underline transition-colors',
 };
 
 export function Button({
@@ -27,9 +29,9 @@ export function Button({
   ...rest
 }: Props) {
   const base =
-    'inline-flex items-center justify-center h-10 px-5 text-[15px] font-medium rounded ' +
-    'transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none ' +
-    'focus:ring-2 focus:ring-blue-300';
+    'inline-flex items-center justify-center h-10 px-5 text-[15px] font-medium rounded-lg ' +
+    'transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none ' +
+    'focus:ring-2 focus:ring-primary/40 focus:ring-offset-2 focus:ring-offset-bg';
   return (
     <button
       {...rest}

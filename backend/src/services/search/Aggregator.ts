@@ -8,25 +8,42 @@
  * 4. 截断到上限并落库
  */
 import { searchOpenSerp } from './OpenSerpClient.js';
+import { searchSerpApi } from './SerpApiClient.js';
 import { searchHackerNews } from './HackerNewsClient.js';
 import { searchReddit } from './RedditClient.js';
+import { getSearchProvider, getSearchApiKey } from '../SettingsService.js';
 import { MarketNeedService } from '../MarketNeedService.js';
 import { logger } from '../../logger.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 export const Aggregator = {
   /**
-   * 按关键词聚合多源数据
+   * 按关键词聚合多源数据(不落库,纯内存返回)
+   * 供讨论梳理等场景在对话中实时检索市场数据使用
    * @param keywords 搜索关键词数组
-   * @param projectId 关联项目 ID
-   * @returns 实际写入数据库的条目数
+   * @returns 去重排序后的原始条目(最多 100 条)
    */
-  async aggregateAndPersist(keywords: string[], projectId: string): Promise<number> {
-    logger.info({ keywords, projectId }, '开始聚合多源数据');
+  async aggregate(
+    keywords: string[]
+  ): Promise<
+    Pick<
+      MarketNeed,
+      'content' | 'title' | 'url' | 'source' | 'engagement' | 'author'
+    >[]
+  > {
+    logger.info({ keywords }, '开始聚合多源数据(内存模式)');
+
+    // 搜索引擎按运行时 provider 分流: serpapi(需 Key) / openserp(自托管)
+    const searchProvider = getSearchProvider();
+    const serpApiKey = getSearchApiKey();
+    const serpSearch = (kw: string) =>
+      searchProvider === 'serpapi' && serpApiKey.trim()
+        ? searchSerpApi(kw, serpApiKey, 'google')
+        : searchOpenSerp(kw, 'google');
 
     const tasks = keywords.map(async (kw) => {
       const [serp, hn, rd] = await Promise.allSettled([
-        searchOpenSerp(kw, 'google'),
+        serpSearch(kw),
         searchHackerNews(kw, 10),
         searchReddit(kw, 10),
       ]);
@@ -65,7 +82,19 @@ export const Aggregator = {
 
     // 按 engagement 降序,截断到 100 条
     unique.sort((a, b) => b.engagement - a.engagement);
-    const top = unique.slice(0, 100);
+    return unique.slice(0, 100);
+  },
+
+  /**
+   * 按关键词聚合多源数据并落库
+   * @param keywords 搜索关键词数组
+   * @param projectId 关联项目 ID
+   * @returns 实际写入数据库的条目数
+   */
+  async aggregateAndPersist(keywords: string[], projectId: string): Promise<number> {
+    logger.info({ keywords, projectId }, '开始聚合多源数据');
+
+    const top = await this.aggregate(keywords);
 
     if (top.length === 0) {
       logger.warn({ keywords }, '所有数据源均无返回');

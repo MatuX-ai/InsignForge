@@ -1,6 +1,7 @@
 /**
  * 应用根组件 - 路由配置
  * /              首页
+ * /discuss       讨论梳理画布
  * /report/:id    报告页
  * /history       历史记录
  * /settings      设置
@@ -11,11 +12,13 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { TopBar } from './components/TopBar';
 import { BottomBar } from './components/BottomBar';
 import { Home } from './pages/Home';
+import { Discuss } from './pages/Discuss';
 import { Report } from './pages/Report';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
 import { Readme } from './pages/Readme';
 import { Faq } from './pages/Faq';
+import { OnboardingModal } from './components/OnboardingModal';
 
 export function App() {
   return (
@@ -24,6 +27,8 @@ export function App() {
         <TopBar />
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/discuss" element={<Discuss />} />
+          <Route path="/discuss/:id" element={<Discuss />} />
           <Route path="/report/:id" element={<Report />} />
           <Route path="/history" element={<History />} />
           <Route path="/settings" element={<Settings />} />
@@ -39,6 +44,8 @@ export function App() {
           />
         </Routes>
         <BottomBar />
+        {/* 首次启动引导弹窗: 未配置 LLM API Key 时弹出 */}
+        <OnboardingModal onConfigured={() => {}} />
       </div>
     </BrowserRouter>
   );

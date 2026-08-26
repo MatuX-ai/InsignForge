@@ -1,9 +1,15 @@
 /**
  * InsightForge 后端入口
  * 启动顺序: 配置 → 数据库 → 路由 → 监听
+ *
+ * 桌面模式支持(环境变量控制,不影响原有 Web 部署):
+ *   - PORT=0: 监听随机可用端口,启动后通过 IPC(process.send)上报实际端口
+ *   - SERVE_FRONTEND=<dist 目录>: 托管前端静态资源并提供 SPA fallback
  */
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getDb } from './db/index.js';
@@ -27,13 +33,16 @@ app.use((req, _res, next) => {
 });
 
 // ---------- 根路由 ----------
-app.get('/', (_req, res) => {
-  res.json({
-    name: 'InsightForge Backend',
-    version: '1.0.0',
-    docs: 'http://localhost:3001/api/v1/health',
+// 桌面模式(SERVE_FRONTEND)下该路径由前端静态资源接管, 跳过 API 信息页
+if (!process.env.SERVE_FRONTEND) {
+  app.get('/', (_req, res) => {
+    res.json({
+      name: 'InsightForge Backend',
+      version: '1.0.0',
+      docs: 'http://localhost:3001/api/v1/health',
+    });
   });
-});
+}
 
 // 健康检查
 app.get('/health', (_req, res) => {
@@ -47,6 +56,25 @@ app.get('/health', (_req, res) => {
 
 // API v1
 app.use('/api/v1', apiRouter);
+
+// ---------- 桌面模式: 托管前端静态资源(SPA) ----------
+// 需放在 404 中间件之前; 非 /api 路径一律回退到 index.html
+const frontendDist = process.env.SERVE_FRONTEND;
+if (frontendDist) {
+  const distDir = path.resolve(frontendDist);
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+      res.sendFile(path.join(distDir, 'index.html'), (err) => {
+        if (err) next();
+      });
+    });
+    logger.info({ distDir }, '已托管前端静态资源(桌面模式)');
+  } else {
+    logger.warn({ distDir }, 'SERVE_FRONTEND 目录不存在,跳过静态托管');
+  }
+}
 
 // 404
 app.use((req, res) => {
@@ -63,15 +91,21 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 const server = app.listen(config.PORT, () => {
   // 启动时确保数据库就绪
   getDb();
+  const address = server.address();
+  const actualPort = typeof address === 'object' && address ? address.port : config.PORT;
   logger.info(
     {
-      port: config.PORT,
+      port: actualPort,
       env: config.NODE_ENV,
       llm: config.LLM_PROVIDER,
       search: config.SEARCH_PROVIDER,
     },
-    `InsightForge 后端已启动 -> http://localhost:${config.PORT}`
+    `InsightForge 后端已启动 -> http://localhost:${actualPort}`
   );
+  // 桌面模式: 通过 IPC 向父进程(Electron 主进程)上报实际端口
+  if (process.send) {
+    process.send({ type: 'ready', port: actualPort });
+  }
 });
 
 // 优雅关闭

@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-bg text-text-primary antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.18), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(167, 139, 250, 0.12), transparent),
+      radial-gradient(ellipse 60% 40% at 0% 0%, rgba(34, 211, 238, 0.08), transparent);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-primary/40 text-white;
+  }
+}
+
+@layer components {
+  .container-narrow {
+    @apply mx-auto w-full max-w-6xl px-6;
+  }
+  .container-wide {
+    @apply mx-auto w-full max-w-7xl px-6;
+  }
+  .section {
+    @apply py-20 md:py-28;
+  }
+  .heading-1 {
+    @apply text-4xl md:text-6xl font-bold tracking-tight leading-tight;
+  }
+  .heading-2 {
+    @apply text-3xl md:text-5xl font-bold tracking-tight leading-tight;
+  }
+  .heading-3 {
+    @apply text-2xl md:text-3xl font-semibold tracking-tight;
+  }
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-light via-accent to-cyan bg-clip-text text-transparent;
+  }
+  .glass-card {
+    @apply border border-border bg-card-solid/60 backdrop-blur-xl shadow-glass;
+    border-radius: 12px;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-medium text-white transition hover:bg-primary-light hover:shadow-glow active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-border-solid bg-bg-secondary/60 px-6 py-3 font-medium text-text-primary backdrop-blur transition hover:border-primary/60 hover:bg-bg-secondary;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm text-text-secondary transition hover:text-text-primary;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-border-solid bg-bg-secondary/60 px-3 py-1 text-xs font-medium text-text-secondary backdrop-blur;
+  }
+  .link {
+    @apply text-primary-light transition hover:text-primary hover:underline;
+  }
+}
+
+/* 滚动渐入动画 */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

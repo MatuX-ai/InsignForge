@@ -1,12 +1,15 @@
 /**
- * 验证落地页路由(预留接口,Phase 1 占位)
+ * 验证落地页路由
  * POST /api/v1/projects/:id/landing
  *
- * 实际生成由 DeepSeek Harness 负责,本 MVP 阶段不实现
+ * 基于市场报告数据自动生成验证落地页 HTML
+ * 使用 packages/core 中的 landing 生成器
  */
 import { Router } from 'express';
 import { ProjectService } from '../services/ProjectService.js';
+import { ReportService } from '../services/ReportService.js';
 import { asyncHandler, ok, fail } from './response.js';
+import { generateLanding } from '../utils/landingGenerator.js';
 
 export const landingRouter = Router({ mergeParams: true });
 
@@ -18,15 +21,75 @@ landingRouter.post(
     if (project.status !== 'completed') {
       return fail(res, 400, '请先完成市场调研');
     }
+
+    const reportRecord = ReportService.getByProjectId(req.params.id);
+    if (!reportRecord) {
+      return fail(res, 404, '报告尚未生成', 404);
+    }
+
+    const report = reportRecord.report_data;
+
+    // 从报告中提取价值主张和副标题
+    const valueProposition = buildValueProposition(project, report);
+    const tagline = buildTagline(report);
+
+    const result = generateLanding({
+      idea: project.name,
+      value_proposition: valueProposition,
+      call_to_action: '加入等待列表',
+      theme: 'light',
+      tagline,
+    });
+
     return ok(
       res,
       {
-        placeholder: true,
-        message:
-          '落地页生成功能将在 v1.1 接入 DeepSeek Harness 后启用。本 MVP 阶段先做接口占位。',
-        project_id: project.id,
+        html: result.html,
+        size: result.size,
+        theme: result.theme,
+        filename: `${project.name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'landing'}-落地页.html`,
       },
-      '接口已就绪(占位)'
+      '落地页生成成功'
     );
   })
 );
+
+/**
+ * 基于报告数据构建价值主张
+ * 优先使用执行摘要,其次用市场规模描述
+ */
+function buildValueProposition(project: { name: string; description: string }, report: { summary: string; market_size: string; pain_points: string[] }): string {
+  // 优先用执行摘要的前 100 字
+  if (report.summary && report.summary.length > 10) {
+    const trimmed = report.summary.length > 120
+      ? report.summary.slice(0, 120) + '...'
+      : report.summary;
+    return trimmed;
+  }
+  // 降级用项目描述
+  return project.description || '我们正在打造下一代工具,帮助你更快验证市场。';
+}
+
+/**
+ * 基于报告数据构建副标题(tagline)
+ * 从痛点或机会中提取最核心的一条
+ */
+function buildTagline(report: { pain_points: string[]; opportunities: string[]; market_heat: { trend: string; heat_score: number } }): string {
+  // 优先用第一个痛点
+  if (report.pain_points && report.pain_points.length > 0) {
+    const pain = report.pain_points[0]!;
+    return pain.length > 50 ? pain.slice(0, 50) + '...' : pain;
+  }
+  // 其次用第一个机会
+  if (report.opportunities && report.opportunities.length > 0) {
+    const opp = report.opportunities[0]!;
+    return opp.length > 50 ? opp.slice(0, 50) + '...' : opp;
+  }
+  // 降级
+  const trendText = report.market_heat?.trend === 'rising'
+    ? '市场快速增长中'
+    : report.market_heat?.trend === 'declining'
+    ? '寻找转型新机会'
+    : '探索市场新可能';
+  return `${trendText} · 热度 ${report.market_heat?.heat_score ?? '--'}/100`;
+}

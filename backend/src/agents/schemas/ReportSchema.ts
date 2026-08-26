@@ -9,7 +9,8 @@ import { z } from 'zod';
 
 export const ReportSourceSchema = z.object({
   title: z.string().min(1),
-  url: z.string().url().or(z.string().min(1)),
+  // LLM 在"无公开数据、基于 AI 知识估计"场景下会给空 url,允许空串避免校验失败
+  url: z.string().url().or(z.string()),
   date: z.string().optional(),
   source: z.string().optional(),
 });

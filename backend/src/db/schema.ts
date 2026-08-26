@@ -100,6 +100,26 @@ CREATE TABLE IF NOT EXISTS executions (
 
 CREATE INDEX IF NOT EXISTS idx_executions_project ON executions(project_id);
 CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
+
+-- ============================================================
+-- 讨论梳理画布表(头脑风暴/商业模式/项目要点梳理)
+-- canvas:  画布 JSON { groups: [{ id, title, points: [...] }] }
+-- messages: 对话历史 JSON [{ role, content, created_at }]
+-- ============================================================
+CREATE TABLE IF NOT EXISTS discussion_sessions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,                            -- 关联项目(报告页"进一步探讨"等场景),可为空
+  title TEXT NOT NULL,
+  mode VARCHAR(20) DEFAULT 'free',            -- business_model / project / free
+  canvas TEXT NOT NULL DEFAULT '{"groups":[]}',
+  messages TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_discussions_created_at ON discussion_sessions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_discussions_project ON discussion_sessions(project_id);
 `;
 
 /**
