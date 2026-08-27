@@ -679,6 +679,33 @@ export function Report() {
     await trigger(id);
   };
 
+  // 复制并重新调研 - 基于现有项目描述创建全新项目,保留原始报告
+  const [duplicating, setDuplicating] = useState(false);
+  const handleDuplicate = async () => {
+    if (!project || duplicating) return;
+    setDuplicating(true);
+    try {
+      const dup = await api.createProject(
+        project.description,
+        `${project.name} (副本)`
+      );
+      // 跳转到新项目页后,自动开始调研
+      navigate(`/report/${dup.id}`);
+      // 后台跳转,不要 await,避免错误传递给调用者
+      void trigger(dup.id).catch(() => {
+        // 错误由 hook 内部 state 管理,无需额外处理
+      });
+    } catch (err) {
+      await dialog.alert({
+        title: '复制失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   /** 用系统默认程序打开归档文件(桌面端) */
   const openArchiveFile = async (file: string) => {
     if (!projectArchive) return;
@@ -1532,6 +1559,17 @@ export function Report() {
                     data-testid="further-discuss"
                   >
                     进一步探讨
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    loading={duplicating}
+                    disabled={exportBusy !== null || duplicating}
+                    onClick={() => void handleDuplicate()}
+                    data-testid="duplicate-project"
+                    title="复制为新项目并重新调研,保留原始报告"
+                  >
+                    📋 复制并重新调研
                   </Button>
 
                   <span className="hidden md:inline-block w-px h-6 bg-border mx-1" aria-hidden />
