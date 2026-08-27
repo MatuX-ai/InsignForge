@@ -1,6 +1,6 @@
 {
   "name": "insightforge-desktop",
-  "version": "1.0.2",
+  "version": "1.2.0",
   "description": "InsightForge 桌面版 - 本地市场验证工具箱",
   "main": "main.cjs",
   "private": true,

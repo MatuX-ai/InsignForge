@@ -148,12 +148,55 @@ fs.cpSync(path.join(ROOT, 'frontend', 'dist'), frontendRes, { recursive: true })
 
 // ---------- 打包 ----------
 if (process.argv.includes('--dist')) {
-  step('5/6 打包 Windows 安装包');
+  step('5/7 打包 Windows 安装包');
   run(`${NPM} exec -- electron-builder --win`, DESKTOP);
 } else {
-  step('5/6 打包 (仅 unpacked)');
+  step('5/7 打包 (仅 unpacked)');
   run(`${NPM} exec -- electron-builder --dir`, DESKTOP);
 }
+
+// ---------- 嵌入图标到 InsightForge.exe ----------
+// electron-builder 自带的 png2icons 可能只生成单尺寸 ICO,导致 RT_GROUP_ICON 仍指向旧条目.
+// 这里手动生成多尺寸 ICO(16/24/32/48/64/128/256)并用 rcedit-x64.exe 嵌入,
+// 确保 win-unpacked/InsightForge.exe 始终带新图标。
+step('6/7 嵌入应用图标');
+const { spawnSync } = await import('node:child_process');
+
+function fail(msg) { console.error(`\n❌ ${msg}`); process.exit(1); }
+
+// 6.1 生成多尺寸 ICO
+const psScript = path.join(DESKTOP, 'scripts', 'make-multi-ico.ps1');
+const icoOut = path.join(DESKTOP, 'dist', '.icon-ico', 'icon.ico');
+console.log(`  生成多尺寸 ICO: ${icoOut}`);
+const psRun = spawnSync('powershell.exe',
+  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript,
+   '-PngPath', path.join(DESKTOP, 'build', 'icon.png'),
+   '-Output', icoOut],
+  { stdio: 'inherit' });
+if (psRun.status !== 0) fail('make-multi-ico.ps1 失败');
+
+// 6.2 rcedit 嵌入图标到 EXE
+const rcedit = path.join(process.env.LOCALAPPDATA || process.env.HOME,
+  'electron-builder', 'Cache', 'winCodeSign', '583233367', 'rcedit-x64.exe');
+const exePath = path.join(DESKTOP, 'dist', 'win-unpacked', 'InsightForge.exe');
+
+if (!fs.existsSync(rcedit)) {
+  console.warn(`  ⚠️ 找不到 rcedit-x64.exe (${rcedit}),跳过嵌入步骤`);
+  console.warn('     请运行 desktop/scripts/fetch-wincodesign.mjs 下载并解压');
+} else if (!fs.existsSync(exePath)) {
+  console.warn(`  ⚠️ 找不到 ${exePath},跳过嵌入步骤`);
+} else {
+  console.log(`  嵌入 ${path.basename(exePath)}`);
+  const before = fs.statSync(exePath).size;
+  const r = spawnSync(rcedit, [exePath, '--set-icon', icoOut], { stdio: 'inherit' });
+  if (r.status !== 0) fail('rcedit 嵌入图标失败');
+  const after = fs.statSync(exePath).size;
+  console.log(`  ✅ 完成 (大小: ${before} → ${after})`);
+}
+
+// ---------- 清理多余图标资源 ----------
+step('7/7 收尾');
+// win-unpacked 里的 chrome_100_percent.pak / resources 等 Electron 资源保持原样
 
 console.log('\n✅ 完成');
 console.log(`  backend:   ${backendRes}`);

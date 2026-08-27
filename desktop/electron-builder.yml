@@ -75,8 +75,15 @@ win:
       arch: [x64]
   icon: build/icon.png
   artifactName: "${productName}-${version}-${arch}.${ext}"
-  # 沙盒/CI 环境无符号链接权限时跳过 rcedit(图标随后续优化补充)
+  # 调用 rcedit 嵌入 icon.ico 到 InsightForge.exe 资源
+  # （之前 false 导致 exe 始终是 Electron 默认图标，新生成的 icon.ico 不生效）
+  # 改为 false: 跳过 electron-builder 内置 winCodeSign 下载/签名,
+  # icon 嵌入由 build.mjs 第 6/7 步用本地 rcedit-x64.exe 完成。
+  # 避免每次都下载 winCodeSign-2.6.0.7z (受 GitHub 网络稳定性影响)。
   signAndEditExecutable: false
+  # 不对 exe 做代码签名(本项目暂未购买 EV 证书)
+  signingHashAlgorithms: null
+  sign: null
 
 nsis:
   oneClick: false
