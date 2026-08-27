@@ -304,6 +304,14 @@ export function Report() {
   const [loadError, setLoadError] = useState<string | null>(null);
   /** 导出中状态:'md'/'pdf'/'json'/null */
   const [exportBusy, setExportBusy] = useState<null | 'md' | 'pdf' | 'json'>(null);
+  /** 导出进度(导出进行中才有值) - 用于顶部进度条显示阶段与耗时 */
+  const [exportProgress, setExportProgress] = useState<
+    { format: 'md' | 'pdf' | 'json'; startedAt: number; phase: 'connecting' | 'generating' | 'downloading' } | null
+  >(null);
+  /** 导出已完成(成功后短暂提示 2s 后消失) */
+  const [exportResult, setExportResult] = useState<{ format: 'md' | 'pdf' | 'json'; ts: number } | null>(null);
+  /** 导出已耗时秒数(每秒 +1) */
+  const [exportElapsed, setExportElapsed] = useState(0);
   /** 开发文档生成状态(未触发为 null) */
   const [docsJob, setDocsJob] = useState<DocsJob | null>(null);
   /** 开发文档相关错误文案 */
@@ -492,6 +500,26 @@ export function Report() {
       // 归档目录不存在等场景静默忽略
     });
   }, []);
+
+  // 导出进度计时器:exportProgress 非空时,每秒 +1 显示已用秒数
+  useEffect(() => {
+    if (exportProgress === null) {
+      setExportElapsed(0);
+      return;
+    }
+    setExportElapsed(0);
+    const timer = window.setInterval(() => {
+      setExportElapsed((v) => v + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [exportProgress]);
+
+  // 导出成功结果 2 秒后自动清除
+  useEffect(() => {
+    if (exportResult === null) return;
+    const timer = window.setTimeout(() => setExportResult(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [exportResult]);
 
   const isCompleted = report !== null;
   const isAnalyzing = loading && !report;
@@ -1378,6 +1406,53 @@ export function Report() {
               </Card>
             </section>
 
+            {/* 导出进度条 - 仅在 exportProgress/exportResult 存在时渲染 */}
+            {(exportProgress !== null || exportResult !== null) && (
+              <div className="mt-6 no-print" role="status" aria-live="polite">
+                {exportProgress !== null && (
+                  <div className="bg-card/90 backdrop-blur-xl border border-primary/40 rounded-card shadow-glass px-4 py-3 mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="shrink-0 w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center text-lg">
+                        {exportProgress.format === 'pdf' ? '📄' : exportProgress.format === 'md' ? '📝' : '🗂'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <div className="text-body text-text-primary font-medium">
+                            正在导出 {exportProgress.format === 'pdf' ? 'PDF' : exportProgress.format === 'md' ? 'Markdown' : 'JSON'} · {exportProgress.phase === 'connecting' ? '连接后端' : exportProgress.phase === 'generating' ? '后端生成中' : '下载到本地'}
+                          </div>
+                          <div className="text-helper text-text-tertiary tabular-nums shrink-0">
+                            已用 {exportElapsed}s
+                          </div>
+                        </div>
+                        {/* indeterminate 进度条:利用 CSS animation 在 0~70% 之间滑动 */}
+                        <div className="mt-2 h-1 bg-border/40 rounded-full overflow-hidden">
+                          <div
+                            className="h-full w-1/3 bg-gradient-to-r from-primary to-primary-light rounded-full"
+                            style={{
+                              animation: 'indeterminate 1.4s ease-in-out infinite',
+                            }}
+                          />
+                        </div>
+                        {exportProgress.phase === 'generating' && exportElapsed >= 8 && (
+                          <div className="mt-2 text-helper text-amber-400">
+                            ⏳ 大报告生成时间可能稍长，请勿关闭页面…
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {exportResult !== null && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-card px-4 py-3 mb-3 flex items-center gap-2 transition-opacity">
+                    <span className="text-emerald-400">✅</span>
+                    <span className="text-body text-text-primary">
+                      {exportResult.format === 'pdf' ? 'PDF' : exportResult.format === 'md' ? 'Markdown' : 'JSON'} 已下载到本地
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 操作按钮区 - 3 类分组:分享/导出 / 流程 / 产物 */}
             <div className="mt-8 no-print">
               <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass px-4 py-3">
@@ -1767,14 +1842,25 @@ export function Report() {
   async function handleExport(format: 'md' | 'pdf'): Promise<void> {
     if (!id) return;
     setExportBusy(format);
+    setExportProgress({ format, startedAt: Date.now(), phase: 'connecting' });
     try {
       if (format === 'md') {
         // md 直接触发后端下载 URL,避免 blob 在 Electron 保存对话框期间失效
+        setExportProgress({ format, startedAt: Date.now(), phase: 'downloading' });
         downloadUrl(api.reportDownloadUrl(id, 'md'));
+        // md 几乎即时下载完成,优化提示时机
+        window.setTimeout(() => {
+          setExportProgress(null);
+          setExportResult({ format, ts: Date.now() });
+        }, 300);
       } else {
         // PDF 需捕获后端 503(未找到 Chromium)以降级到浏览器打印,故保留 fetch blob
+        // 阶段 1:connecting 阶段 2:generating(后端生成 PDF)阶段 3:downloading
         const { blob, filename } = await api.downloadReport(id, 'pdf');
+        setExportProgress({ format, startedAt: Date.now(), phase: 'downloading' });
         downloadBlob(blob, filename);
+        setExportProgress(null);
+        setExportResult({ format, ts: Date.now() });
       }
     } catch (err) {
       const e = err as Error & { status?: number };
