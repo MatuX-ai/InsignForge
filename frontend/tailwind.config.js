@@ -36,6 +36,7 @@ export default {
         ],
       },
       fontSize: {
+        display: ['32px', { lineHeight: '40px', fontWeight: '700' }],
         title: ['24px', { lineHeight: '32px', fontWeight: '600' }],
         section: ['18px', { lineHeight: '28px', fontWeight: '600' }],
         body: ['15px', { lineHeight: '24px', fontWeight: '400' }],

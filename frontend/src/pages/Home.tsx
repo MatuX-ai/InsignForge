@@ -6,6 +6,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Textarea } from '../components/Textarea';
+import { Banner } from '../components/Banner';
+import { ResearchProgress } from '../components/ResearchProgress';
 import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { useResearch } from '../hooks/useResearch';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -22,7 +24,14 @@ export function Home() {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [, setHistory] = useLocalStorage<HistoryEntry[]>('history', []);
-  const { trigger, loading, error: researchError, errorCode, status } = useResearch();
+  const {
+      trigger,
+      loading,
+      error: researchError,
+      errorCode,
+      retryAttempt,
+      status,
+    } = useResearch();
   const navigate = useNavigate();
   const [setupOpen, setSetupOpen] = useState(false);
 
@@ -78,7 +87,14 @@ export function Home() {
               maxLength={500}
             />
             {showError && (
-              <div className="text-helper text-red-400">{showError}</div>
+              <Banner tone="error" title="提示">
+                {showError}
+                {retryAttempt > 0 && (
+                  <div className="mt-2 text-text-secondary">
+                    🔄 正在自动重试 ({retryAttempt} / 3)…
+                  </div>
+                )}
+              </Banner>
             )}
             <div className="flex flex-col items-center gap-4">
               <Button onClick={submit} disabled={!canSubmit} loading={loading}>
@@ -118,9 +134,12 @@ export function Home() {
         </div>
 
         {loading && status && (
-          <div className="text-helper text-text-secondary">
-            {status.progress}
-          </div>
+          <ResearchProgress
+            progress={status.progress}
+            currentStep={status.execution.current_step}
+            startedAt={status.execution.started_at}
+            className="text-helper text-text-secondary max-w-md"
+          />
         )}
       </div>
 

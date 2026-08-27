@@ -13,6 +13,13 @@ import { StatusBadge } from '../components/StatusBadge';
 import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { TechSelectionModal } from '../components/TechSelectionModal';
 import { FrontendDesignModal } from '../components/FrontendDesignModal';
+import { useDialog } from '../components/Dialog';
+import { Banner } from '../components/Banner';
+import { Dropdown } from '../components/Dropdown';
+import { JobProgressItem } from '../components/JobProgressItem';
+import { ReportToc } from '../components/ReportToc';
+import { Tooltip } from '../components/Tooltip';
+import { ResearchProgress } from '../components/ResearchProgress';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
 import type {
@@ -68,17 +75,17 @@ const DOCS_POLL_INTERVAL = 4000;
 /** 商业计划书轮询间隔 */
 const BP_POLL_INTERVAL = 4000;
 
-/** 目录章节定义 */
+/** 目录章节定义 - 顺序与报告正文渲染顺序一致 */
 const TOC_SECTIONS = [
   { id: 'section-summary', label: '执行摘要' },
-  { id: 'section-heat', label: '市场热度' },
   { id: 'section-feasibility', label: '可行性评分' },
+  { id: 'section-recommendation', label: '行动建议' },
+  { id: 'section-heat', label: '市场热度' },
   { id: 'section-competitors', label: '竞品识别' },
   { id: 'section-compare', label: '竞品对比矩阵' },
   { id: 'section-pain', label: '用户痛点' },
   { id: 'section-market-size', label: '市场规模' },
   { id: 'section-risk-opp', label: '风险与机会' },
-  { id: 'section-recommendation', label: '行动建议' },
   { id: 'section-sources', label: '数据来源' },
 ];
 
@@ -292,6 +299,7 @@ function TrendSparkline({ trend }: { trend: 'rising' | 'stable' | 'declining' })
 export function Report() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const dialog = useDialog();
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** 导出中状态:'md'/'pdf'/'json'/null */
@@ -312,8 +320,6 @@ export function Report() {
   const [bpDownloading, setBpDownloading] = useState(false);
   /** 商业计划书轮询定时器句柄 */
   const bpTimerRef = useRef<number | null>(null);
-  /** 分享菜单展开状态 */
-  const [shareOpen, setShareOpen] = useState(false);
   /** 复制成功提示 */
   const [copySuccess, setCopySuccess] = useState(false);
   /** 落地页预览弹窗 */
@@ -341,7 +347,17 @@ export function Report() {
   /** 历史文档归档(项目名 -> 已生成文档列表),用于左侧"已生成文档" */
   const [archives, setArchives] = useState<HistoryArchives>({});
 
-  const { status, report, loading, error, errorCode, trigger, reset } = useResearch();
+  const {
+    status,
+    report,
+    loading,
+    error,
+    errorCode,
+    retryAttempt,
+    trigger,
+    retry,
+    reset,
+  } = useResearch();
 
   useEffect(() => {
     if (!id) return;
@@ -350,7 +366,6 @@ export function Report() {
     setDocsError(null);
     setBpJob(null);
     setBpError(null);
-    setShareOpen(false);
     setLandingPreview(null);
     if (docsTimerRef.current !== null) {
       window.clearInterval(docsTimerRef.current);
@@ -517,13 +532,18 @@ export function Report() {
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
     } catch {
-      // 降级方案
+      // 降级方案 - 用 textarea + execCommand
       const ta = document.createElement('textarea');
       ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(ta);
+      }
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
     }
@@ -531,14 +551,27 @@ export function Report() {
 
   // 生成二维码(使用公共 API 的 data URL 方案,纯前端不依赖外部)
   // 这里用简单的文本分享链接方式,实际二维码可用 qrcode.js 库
-  const shareLink = () => {
+  const shareLink = async () => {
     if (!id) return;
     const url = window.location.href;
-    navigator.clipboard?.writeText(url).then(() => {
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
-    });
-    setShareOpen(false);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // 非安全上下文或权限被拒绝:降级到 textarea + execCommand
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
   };
 
   // 生成落地页
@@ -550,10 +583,18 @@ export function Report() {
       if (result && typeof result === 'object' && 'html' in (result as object)) {
         setLandingPreview((result as { html: string }).html);
       } else {
-        alert((result as { message?: string }).message ?? '生成失败');
+        await dialog.alert({
+          title: '生成失败',
+          message: (result as { message?: string }).message ?? '生成失败',
+          tone: 'danger',
+        });
       }
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      await dialog.alert({
+        title: '生成失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
     } finally {
       setLandingLoading(false);
     }
@@ -614,13 +655,21 @@ export function Report() {
   const openArchiveFile = async (file: string) => {
     if (!projectArchive) return;
     if (!window.insightforge?.openPath) {
-      alert('仅桌面端支持直接打开归档文件');
+      await dialog.alert({
+        title: '桌面端专属功能',
+        message: '仅桌面端支持直接打开归档文件。',
+        tone: 'warning',
+      });
       return;
     }
     const fullPath = `${projectArchive.dir}\\${file}`;
     const res = await window.insightforge.openPath(fullPath);
     if (!res?.ok) {
-      alert(`打开失败:${res?.message ?? '未知错误'}`);
+      await dialog.alert({
+        title: '打开失败',
+        message: `打开失败:${res?.message ?? '未知错误'}`,
+        tone: 'danger',
+      });
     }
   };
 
@@ -657,7 +706,11 @@ export function Report() {
       });
       navigate(`/discuss/${res.session.id}`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      await dialog.alert({
+        title: '创建讨论失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
       setDiscussing(false);
     }
   };
@@ -746,120 +799,150 @@ export function Report() {
         </div>
 
         {isAnalyzing && (
-          <Card title="分析中...">
-            <div className="text-text-secondary text-helper">
-              {status?.progress ?? '准备中...'}
-            </div>
-            <div className="mt-3 inline-flex items-center gap-1">
-              <span className="dot-1">.</span>
-              <span className="dot-2">.</span>
-              <span className="dot-3">.</span>
-            </div>
+          <Card title="调研分析中...">
+            <ResearchProgress
+              progress={status?.progress ?? '准备中...'}
+              currentStep={status?.execution.current_step ?? ''}
+              startedAt={status?.execution.started_at ?? new Date().toISOString()}
+            />
           </Card>
         )}
 
+        {/* 后台任务进度聚合 - 开发文档 / 商业计划书 */}
+        {(docsJob || bpJob) && (
+          <div className="my-6 space-y-3">
+            {docsJob && (
+              <JobProgressItem
+                label={`${docsJob.version === 'mvp' ? 'MVP' : '完整'}开发文档`}
+                status={
+                  docsJob.status === 'success' && docsJob.filenames.length === 0
+                    ? 'idle'
+                    : docsJob.status
+                }
+                currentStep={docsJob.current_step}
+                progress={docsJob.progress}
+                total={docsJob.total}
+                progressText={`${docsJob.progress} / ${docsJob.total}`}
+                startedAt={docsJob.started_at ?? undefined}
+                fileCount={docsJob.filenames.length}
+                fileTotal={docsJob.total}
+                archivePath={docsJob.archive_path ?? undefined}
+                errorMessage={docsError ?? undefined}
+                primaryLabel="下载开发文档包"
+                primaryLoading={docsDownloading}
+                primaryDisabled={exportBusy !== null}
+                onPrimary={() => void handleGenerateDocs()}
+                retryLabel="重新生成"
+                onRetry={() => handleGenerateDocs()}
+              />
+            )}
+            {docsJob && docsJob.status === 'success' && docsJob.filenames.length > 0 && (
+              <details className="bg-card/50 border border-border rounded-card px-4 py-2">
+                <summary className="cursor-pointer text-helper text-text-secondary hover:text-text-primary">
+                  查看文件列表 ({docsJob.filenames.length})
+                </summary>
+                <div className="mt-2 text-helper text-text-secondary space-y-1">
+                  {(selectedTechPlan || selectedDesignPlan) && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {selectedTechPlan && (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                          技术栈: {selectedTechPlan.plan_name}
+                        </span>
+                      )}
+                      {selectedDesignPlan && (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                          设计: {selectedDesignPlan.plan_name}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+                    {docsJob.filenames.map((fn) => (
+                      <li key={fn} className="truncate">
+                        · {fn}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            )}
+            {bpJob && (
+              <JobProgressItem
+                label="商业计划书"
+                status={
+                  bpJob.status === 'success' && bpJob.filenames.length === 0
+                    ? 'idle'
+                    : bpJob.status
+                }
+                currentStep={bpJob.current_step}
+                progress={bpJob.progress}
+                total={bpJob.total}
+                progressText={`${bpJob.progress} / ${bpJob.total}`}
+                startedAt={bpJob.started_at ?? undefined}
+                fileCount={bpJob.filenames.length}
+                fileTotal={bpJob.total}
+                archivePath={bpJob.archive_path ?? undefined}
+                errorMessage={bpError ?? undefined}
+                primaryLabel="下载商业计划书包"
+                primaryLoading={bpDownloading}
+                primaryDisabled={exportBusy !== null}
+                onPrimary={() => void handleGenerateBp()}
+                retryLabel="重新生成"
+                onRetry={() => handleGenerateBp()}
+              />
+            )}
+            {bpJob && bpJob.status === 'success' && bpJob.filenames.length > 0 && (
+              <details className="bg-card/50 border border-border rounded-card px-4 py-2">
+                <summary className="cursor-pointer text-helper text-text-secondary hover:text-text-primary">
+                  查看文件列表 ({bpJob.filenames.length})
+                </summary>
+                <div className="mt-2 text-helper text-text-secondary">
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+                    {bpJob.filenames.map((fn) => (
+                      <li key={fn} className="truncate">
+                        · {fn}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* 调研失败 Banner - 展示错误信息,提供手动重试入口 */}
         {error && (
-          <Card>
-            <div className="text-red-600">调研失败:{error}</div>
-          </Card>
-        )}
-
-        {docsError && (
-          <Card>
-            <div className="text-red-600">开发文档生成失败:{docsError}</div>
-          </Card>
-        )}
-
-        {bpError && (
-          <Card>
-            <div className="text-red-600">商业计划书生成失败:{bpError}</div>
-          </Card>
-        )}
-
-        {docsJob && docsJob.status === 'running' && (
-          <Card title={`正在生成${docsJob.version === 'mvp' ? 'MVP' : ''}开发文档...`}>
-            <div className="text-text-secondary text-helper">
-              {docsJob.current_step}
-            </div>
-            <div className="mt-3 w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-primary to-accent h-full transition-all"
-                style={{ width: `${(docsJob.progress / Math.max(1, docsJob.total)) * 100}%` }}
-              />
-            </div>
-            <div className="mt-2 text-helper text-text-secondary">
-              {docsJob.progress} / {docsJob.total}
-            </div>
-          </Card>
-        )}
-
-        {bpJob && bpJob.status === 'running' && (
-          <Card title="正在生成商业计划书...">
-            <div className="text-text-secondary text-helper">
-              {bpJob.current_step}
-            </div>
-            <div className="mt-3 w-full bg-slate-700/50 rounded-full h-2 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-primary to-accent h-full transition-all"
-                style={{ width: `${(bpJob.progress / Math.max(1, bpJob.total)) * 100}%` }}
-              />
-            </div>
-            <div className="mt-2 text-helper text-text-secondary">
-              {bpJob.progress} / {bpJob.total}
-            </div>
-          </Card>
-        )}
-
-        {docsJob && docsJob.status === 'success' && docsJob.filenames.length > 0 && (
-          <Card title={`${docsJob.version === 'mvp' ? 'MVP' : '完整'}开发文档已就绪`}>
-            <div className="text-text-secondary text-helper mb-2">
-              {docsJob.filenames.length} 份文档 (共 {docsJob.total} 份) 已打包,可直接交付开发。
-              {selectedTechPlan && (
-                <span className="ml-2 text-emerald-400">技术栈: {selectedTechPlan.plan_name}</span>
+          <div className="my-6">
+            <Banner
+              tone="error"
+              title="调研失败"
+              action={
+                retryAttempt === 0
+                  ? {
+                      label: '重试',
+                      onClick: () => void retry(),
+                    }
+                  : undefined
+              }
+            >
+              {error}
+              {retryAttempt > 0 && (
+                <div className="mt-2 text-text-secondary">
+                  🔄 正在自动重试 ({retryAttempt} / 3)…
+                </div>
               )}
-              {selectedDesignPlan && (
-                <span className="ml-2 text-emerald-400">设计: {selectedDesignPlan.plan_name}</span>
-              )}
-            </div>
-            {docsJob.archive_path && (
-              <div className="mb-2 text-helper text-success">
-                ✅ 已自动保存到历史文档:{docsJob.archive_path}
-              </div>
-            )}
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-helper text-text-secondary">
-              {docsJob.filenames.map((fn) => (
-                <li key={fn} className="truncate">
-                  · {fn}
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
-
-        {bpJob && bpJob.status === 'success' && bpJob.filenames.length > 0 && (
-          <Card title="商业计划书已就绪">
-            <div className="text-text-secondary text-helper mb-2">
-              {bpJob.filenames.length} 份文档 (共 {bpJob.total} 份) 已打包,可用于融资、合伙洽谈等场景。
-            </div>
-            {bpJob.archive_path && (
-              <div className="mb-2 text-helper text-success">
-                ✅ 已自动保存到历史文档:{bpJob.archive_path}
-              </div>
-            )}
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-helper text-text-secondary">
-              {bpJob.filenames.map((fn) => (
-                <li key={fn} className="truncate">
-                  · {fn}
-                </li>
-              ))}
-            </ul>
-          </Card>
+            </Banner>
+          </div>
         )}
 
         {currentReport && (
           <>
-            {/* 1. 执行摘要 */}
-            <section id="section-summary">
+            {/* 章节导航 - 横向滚动胶囊,移动端友好 */}
+            <ReportToc items={TOC_SECTIONS} />
+
+            {/* 章节断点辅助样式:让每个 section 之间有明显的视觉分隔,便于长报告扫读 */}
+            {/* 1. 执行摘要 - 顶部不需断点 */}
+            <section id="section-summary" className="mb-6">
               <Card title="执行摘要">
                 <p className="text-body text-text-primary leading-relaxed">
                   {currentReport.summary}
@@ -868,7 +951,7 @@ export function Report() {
             </section>
 
             {/* 2. 市场热度 - 可视化增强 */}
-            <section id="section-heat" className="my-6">
+            <section id="section-heat" className="mt-10 pt-8 border-t border-border/30">
               <Card title="市场热度">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="text-center">
@@ -918,8 +1001,40 @@ export function Report() {
 
             {/* 3. 可行性评分 */}
             {feasibility && (
-              <section id="section-feasibility" className="my-6">
-                <Card title="可行性评分">
+              <section id="section-feasibility" className="mt-10 pt-8 border-t border-border/30">
+                <Card
+                  title={
+                    <span className="inline-flex items-center gap-2">
+                      可行性评分
+                      <Tooltip
+                        placement="right"
+                        content={
+                          <div className="space-y-1">
+                            <div className="font-medium text-text-primary">
+                              算法说明
+                            </div>
+                            <div className="text-text-secondary leading-relaxed">
+                              基于报告数据启发式打分 (0-100):
+                              市场热度 + 竞争烈度 + 痛点强度 + 机会数量
+                              四个维度的加权平均。
+                            </div>
+                            <div className="text-text-tertiary pt-1">
+                              ≥70 推荐进入 · 40-69 谨慎进入 · &lt;40 不推荐
+                            </div>
+                          </div>
+                        }
+                      >
+                        <button
+                          type="button"
+                          aria-label="评分算法说明"
+                          className="inline-flex items-center justify-center w-5 h-5 rounded-full text-helper text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors cursor-help"
+                        >
+                          ⓘ
+                        </button>
+                      </Tooltip>
+                    </span>
+                  }
+                >
                   <div className="flex flex-col md:flex-row items-center gap-6">
                     <div className="flex-shrink-0">
                       <RingProgress
@@ -960,8 +1075,35 @@ export function Report() {
               </section>
             )}
 
-            {/* 4. 竞品识别 - 补全优劣势 */}
-            <section id="section-competitors">
+            {/* 4. 行动建议 - 前置,让读者先拿到"该不该做/怎么开始"的答案 */}
+            {recommendations.length > 0 && (
+              <section
+                id="section-recommendation"
+                className="mt-10 pt-8 border-t border-border/30"
+              >
+                <Card title="行动建议" tone="primary">
+                  <div className="space-y-3">
+                    {recommendations.map((r, i) => (
+                      <div
+                        key={i}
+                        className="flex items-start gap-3 p-3 bg-primary/10 rounded-lg border border-primary/20"
+                      >
+                        <span className="text-primary-light font-bold flex-shrink-0">
+                          {i + 1}
+                        </span>
+                        <span className="text-text-primary">{r}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-helper text-text-secondary">
+                    * 建议由系统基于报告数据自动生成,仅供参考
+                  </div>
+                </Card>
+              </section>
+            )}
+
+            {/* 5. 竞品识别 - 补全优劣势 */}
+            <section id="section-competitors" className="mt-10 pt-8 border-t border-border/30">
               <Card title="竞品识别">
                 {currentReport.competitors.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无数据</div>
@@ -1043,7 +1185,7 @@ export function Report() {
 
             {/* 5. 竞品对比矩阵 */}
             {currentReport.competitors.length >= 2 && (
-              <section id="section-compare" className="my-6">
+              <section id="section-compare" className="mt-10 pt-8 border-t border-border/30">
                 <Card title="竞品对比矩阵">
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
@@ -1140,7 +1282,7 @@ export function Report() {
             )}
 
             {/* 6. 用户痛点 */}
-            <section id="section-pain" className="my-6">
+            <section id="section-pain" className="mt-10 pt-8 border-t border-border/30">
               <Card title="用户痛点">
                 {currentReport.pain_points.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无数据</div>
@@ -1158,14 +1300,14 @@ export function Report() {
             </section>
 
             {/* 7. 市场规模 */}
-            <section id="section-market-size">
+            <section id="section-market-size" className="mt-10 pt-8 border-t border-border/30">
               <Card title="市场规模估算">
                 <p className="text-body">{currentReport.market_size}</p>
               </Card>
             </section>
 
             {/* 8. 风险与机会 */}
-            <section id="section-risk-opp" className="my-6">
+            <section id="section-risk-opp" className="mt-10 pt-8 border-t border-border/30">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card title="风险">
                   {currentReport.risks.length === 0 ? (
@@ -1198,30 +1340,11 @@ export function Report() {
               </div>
             </section>
 
-            {/* 9. 行动建议 */}
-            {recommendations.length > 0 && (
-              <section id="section-recommendation" className="my-6">
-                <Card title="行动建议">
-                  <div className="space-y-3">
-                    {recommendations.map((r, i) => (
-                      <div
-                        key={i}
-                        className="flex items-start gap-3 p-3 bg-primary/10 rounded-lg border border-primary/20"
-                      >
-                        <span className="text-primary-light font-bold flex-shrink-0">{i + 1}</span>
-                        <span className="text-text-primary">{r}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-3 text-helper text-text-secondary">
-                    * 建议由系统基于报告数据自动生成,仅供参考
-                  </div>
-                </Card>
-              </section>
-            )}
-
-            {/* 10. 数据来源 */}
-            <section id="section-sources">
+            {/* 9. 数据来源 - 章节断点(顶部边框) */}
+            <section
+              id="section-sources"
+              className="mt-12 pt-8 border-t border-border/40"
+            >
               <Card title="数据来源">
                 {currentReport.sources.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无来源</div>
@@ -1255,132 +1378,134 @@ export function Report() {
               </Card>
             </section>
 
-            {/* 操作按钮区 */}
-            <div className="mt-8 flex flex-wrap justify-center gap-3 no-print">
-              <Button
-                variant="outline"
-                loading={exportBusy === 'md'}
-                disabled={exportBusy !== null}
-                onClick={() => handleExport('md')}
-                data-testid="export-md"
-              >
-                导出 Markdown
-              </Button>
-              <Button
-                variant="outline"
-                loading={exportBusy === 'pdf'}
-                disabled={exportBusy !== null}
-                onClick={() => handleExport('pdf')}
-                data-testid="export-pdf"
-              >
-                导出 PDF
-              </Button>
-              <Button
-                variant="outline"
-                loading={exportBusy === 'json'}
-                disabled={exportBusy !== null}
-                onClick={handleExportJson}
-              >
-                导出 JSON
-              </Button>
+            {/* 操作按钮区 - 3 类分组:分享/导出 / 流程 / 产物 */}
+            <div className="mt-8 no-print">
+              <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass px-4 py-3">
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {/* 组 1: 分享 + 导出 (次要) */}
+                  <Dropdown
+                    trigger={
+                      <Button variant="outline" disabled={exportBusy !== null}>
+                        分享 ▾
+                      </Button>
+                    }
+                    items={[
+                      {
+                        label: copySuccess ? '✓ 已复制!' : '📋 复制摘要',
+                        onClick: () => void copySummary(),
+                      },
+                      {
+                        label: '🔗 复制链接',
+                        onClick: shareLink,
+                      },
+                      {
+                        label: '🖨️ 打印报告',
+                        onClick: () => window.print(),
+                      },
+                    ]}
+                  />
 
-              {/* 分享按钮 */}
-              <div className="relative">
-                <Button
-                  variant="outline"
-                  onClick={() => setShareOpen((v) => !v)}
-                  disabled={exportBusy !== null}
-                >
-                  分享 ▾
-                </Button>
-                {shareOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-card-solid backdrop-blur-xl border border-border rounded-lg shadow-glass z-10 overflow-hidden">
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-hover-bg text-text-primary transition-colors"
-                      onClick={copySummary}
-                    >
-                      {copySuccess ? '✓ 已复制!' : '📋 复制摘要'}
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-hover-bg text-text-primary transition-colors"
-                      onClick={shareLink}
-                    >
-                      🔗 复制链接
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-hover-bg text-text-primary transition-colors"
-                      onClick={() => {
-                        window.print();
-                        setShareOpen(false);
-                      }}
-                    >
-                      🖨️ 打印报告
-                    </button>
-                  </div>
-                )}
+                  <Dropdown
+                    trigger={
+                      <Button
+                        variant="outline"
+                        disabled={exportBusy !== null && exportBusy === 'json'}
+                        loading={exportBusy !== null && exportBusy === 'json'}
+                        data-testid="export-toggle"
+                      >
+                        导出 ▾
+                      </Button>
+                    }
+                    items={[
+                      {
+                        label: exportBusy === 'md' ? '⏳ 导出中...' : '📝 Markdown',
+                        onClick: () => handleExport('md'),
+                        loading: exportBusy === 'md',
+                        testId: 'export-md',
+                      },
+                      {
+                        label: exportBusy === 'pdf' ? '⏳ 导出中...' : '🖨 PDF',
+                        onClick: () => handleExport('pdf'),
+                        loading: exportBusy === 'pdf',
+                        testId: 'export-pdf',
+                      },
+                      {
+                        label: exportBusy === 'json' ? '⏳ 导出中...' : '🗂 JSON',
+                        onClick: handleExportJson,
+                        loading: exportBusy === 'json',
+                      },
+                    ]}
+                  />
+
+                  <span className="hidden md:inline-block w-px h-6 bg-border mx-1" aria-hidden />
+
+                  {/* 组 2: 流程动作 (中等) */}
+                  <Button
+                    variant="outline"
+                    loading={landingLoading}
+                    disabled={exportBusy !== null || landingLoading}
+                    onClick={handleGenerateLanding}
+                  >
+                    生成验证页
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    loading={discussing}
+                    disabled={exportBusy !== null || discussing}
+                    onClick={() => void handleFurtherDiscuss()}
+                    data-testid="further-discuss"
+                  >
+                    进一步探讨
+                  </Button>
+
+                  <span className="hidden md:inline-block w-px h-6 bg-border mx-1" aria-hidden />
+
+                  {/* 组 3: 高级产物 (主) */}
+                  <Button
+                    variant="primary"
+                    loading={docsJob?.status === 'running' || docsDownloading}
+                    disabled={
+                      exportBusy !== null ||
+                      docsJob?.status === 'running' ||
+                      docsDownloading
+                    }
+                    onClick={() => handleGenerateDocs()}
+                    data-testid="generate-docs"
+                  >
+                    {docsDownloading
+                      ? '下载中...'
+                      : docsJob?.status === 'running'
+                        ? '生成中...'
+                        : docsJob?.status === 'success'
+                          ? `下载${docsJob.version === 'mvp' ? 'MVP' : ''}开发文档`
+                          : docsJob?.status === 'failed'
+                            ? '重新生成开发文档'
+                            : '生成开发文档'}
+                  </Button>
+
+                  <Button
+                    variant="primary"
+                    loading={bpJob?.status === 'running' || bpDownloading}
+                    disabled={
+                      exportBusy !== null ||
+                      bpJob?.status === 'running' ||
+                      bpDownloading
+                    }
+                    onClick={() => handleGenerateBp()}
+                  >
+                    {bpDownloading
+                      ? '下载中...'
+                      : bpJob?.status === 'running'
+                        ? '生成中...'
+                        : bpJob?.status === 'success'
+                          ? '下载商业计划书'
+                          : bpJob?.status === 'failed'
+                            ? '重新生成商业计划书'
+                            : '生成商业计划书'}
+                  </Button>
+                </div>
               </div>
-
-              <Button
-                variant="outline"
-                loading={landingLoading}
-                disabled={exportBusy !== null || landingLoading}
-                onClick={handleGenerateLanding}
-              >
-                生成验证页
-              </Button>
-
-              <Button
-                variant="outline"
-                loading={discussing}
-                disabled={exportBusy !== null || discussing}
-                onClick={() => void handleFurtherDiscuss()}
-                data-testid="further-discuss"
-              >
-                进一步探讨
-              </Button>
-
-              <Button
-                variant="primary"
-                loading={docsJob?.status === 'running' || docsDownloading}
-                disabled={
-                  exportBusy !== null ||
-                  docsJob?.status === 'running' ||
-                  docsDownloading
-                }
-                onClick={() => handleGenerateDocs()}
-                data-testid="generate-docs"
-              >
-                {docsDownloading
-                  ? '下载中...'
-                  : docsJob?.status === 'running'
-                    ? '生成中...'
-                    : docsJob?.status === 'success'
-                      ? `下载${docsJob.version === 'mvp' ? 'MVP' : ''}开发文档`
-                      : docsJob?.status === 'failed'
-                        ? '重新生成开发文档'
-                        : '生成开发文档'}
-              </Button>
-
-              <Button
-                variant="primary"
-                loading={bpJob?.status === 'running' || bpDownloading}
-                disabled={
-                  exportBusy !== null ||
-                  bpJob?.status === 'running' ||
-                  bpDownloading
-                }
-                onClick={() => handleGenerateBp()}
-              >
-                {bpDownloading
-                  ? '下载中...'
-                  : bpJob?.status === 'running'
-                    ? '生成中...'
-                    : bpJob?.status === 'success'
-                      ? '下载商业计划书'
-                      : bpJob?.status === 'failed'
-                        ? '重新生成商业计划书'
-                        : '生成商业计划书'}
-              </Button>
             </div>
 
             {/* 移动端底部操作栏 */}
@@ -1456,7 +1581,7 @@ export function Report() {
                 srcDoc={landingPreview}
                 title="落地页预览"
                 className="w-full h-[60vh] border-0"
-                sandbox="allow-scripts"
+                sandbox=""
               />
             </div>
           </div>
@@ -1658,15 +1783,23 @@ export function Report() {
         (e.status === 503 || (e.message ?? '').includes('CHROMIUM'));
 
       if (isChromeMissing) {
-        const useBrowserPrint = window.confirm(
-          '后端未配置 PDF 生成器 (未检测到系统中的 Chrome/Edge/Chromium)。\n' +
-            '是否改用浏览器内置打印?在打印预览对话框选择 "另存为 PDF" 即可。'
-        );
+        const useBrowserPrint = await dialog.confirm({
+          title: 'PDF 导出降级',
+          message:
+            '后端未配置 PDF 生成器 (未检测到系统中的 Chrome/Edge/Chromium)。\n是否改用浏览器内置打印?在打印预览对话框选择 "另存为 PDF" 即可。',
+          primaryLabel: '使用浏览器打印',
+          secondaryLabel: '取消',
+          tone: 'warning',
+        });
         if (useBrowserPrint) {
           window.print();
         }
       } else {
-        alert(`导出 ${format.toUpperCase()} 失败:${e.message ?? String(err)}`);
+        await dialog.alert({
+          title: `导出 ${format.toUpperCase()} 失败`,
+          message: e.message ?? String(err),
+          tone: 'danger',
+        });
       }
     } finally {
       setExportBusy(null);
@@ -1686,10 +1819,13 @@ export function Report() {
     if (docsJob?.status === 'success') {
       setDocsDownloading(true);
       try {
-        // 直接触发后端下载 URL,避免 blob 在 Electron 保存对话框期间失效
         downloadUrl(api.docsDownloadUrl(id));
       } catch (err) {
-        alert(`下载失败:${err instanceof Error ? err.message : String(err)}`);
+        await dialog.alert({
+          title: '下载失败',
+          message: err instanceof Error ? err.message : String(err),
+          tone: 'danger',
+        });
       } finally {
         setDocsDownloading(false);
       }
@@ -1744,7 +1880,11 @@ export function Report() {
         }
       }
     } catch (err) {
-      alert(`触发失败:${err instanceof Error ? err.message : String(err)}`);
+      await dialog.alert({
+        title: '触发失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
     }
   }
 
@@ -1761,10 +1901,13 @@ export function Report() {
     if (bpJob?.status === 'success') {
       setBpDownloading(true);
       try {
-        // 直接触发后端下载 URL,避免 blob 在 Electron 保存对话框期间失效
         downloadUrl(api.bpDownloadUrl(id));
       } catch (err) {
-        alert(`下载失败:${err instanceof Error ? err.message : String(err)}`);
+        await dialog.alert({
+          title: '下载失败',
+          message: err instanceof Error ? err.message : String(err),
+          tone: 'danger',
+        });
       } finally {
         setBpDownloading(false);
       }

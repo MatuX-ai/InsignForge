@@ -4,9 +4,10 @@
  *
  * 注意:API Key 保存后会同步写入后端内存与 .env 文件,无需重启服务。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
+import { Banner } from '../components/Banner';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { api } from '../lib/api';
 import type { AppSettings, LlmStatus } from '../types';
@@ -27,6 +28,46 @@ export function Settings() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
+
+  /** 最近一次成功保存的快照,用于检测"未保存修改" */
+  const [savedSnapshot, setSavedSnapshot] = useState(() => ({
+    settings,
+    apiKey,
+    serpApiKey,
+  }));
+
+  /**
+   * 与快照对比,判断用户是否改动过任意表单字段。
+   * 注意 showApiKey 不参与对比(只影响 UI,不参与保存)。
+   */
+  const isDirty = useMemo(() => {
+    type Persistable = Omit<AppSettings, 'showApiKey'>;
+    const stripUi = (s: AppSettings): Persistable => ({
+      llmProvider: s.llmProvider,
+      llmModel: s.llmModel,
+      searchProvider: s.searchProvider,
+      searchUrl: s.searchUrl,
+      serpApiKey: s.serpApiKey,
+    });
+    const cur = JSON.stringify({
+      settings: stripUi(settings),
+      apiKey,
+      serpApiKey,
+    });
+    const snap = JSON.stringify({
+      settings: stripUi(savedSnapshot.settings),
+      apiKey: savedSnapshot.apiKey,
+      serpApiKey: savedSnapshot.serpApiKey,
+    });
+    return cur !== snap;
+  }, [settings, apiKey, serpApiKey, savedSnapshot]);
+
+  /** 还原快照,丢弃当前修改 */
+  const revert = () => {
+    setSettings(savedSnapshot.settings);
+    setApiKey(savedSnapshot.apiKey);
+    setSerpApiKey(savedSnapshot.serpApiKey);
+  };
 
   // 进入页面拉取后端 LLM 状态
   useEffect(() => {
@@ -76,6 +117,8 @@ export function Settings() {
         apiKey: serpApiKey.trim(),
       });
       if (!searchRes.ok) throw new Error(searchRes.message ?? '搜索配置保存失败');
+      // 保存成功后更新快照,isDirty 随即恢复为 false
+      setSavedSnapshot({ settings, apiKey, serpApiKey });
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -83,9 +126,39 @@ export function Settings() {
     }
   };
 
+  // 离开/刷新前提示未保存修改
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
   return (
     <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
-      <h1 className="text-title text-text-primary mb-6">设置</h1>
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+        <h1 className="text-title text-text-primary">设置</h1>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={revert}
+            className="text-helper text-text-secondary hover:text-primary underline-offset-4 hover:underline transition-colors"
+          >
+            放弃修改
+          </button>
+        )}
+      </div>
+
+      {isDirty && (
+        <div className="mb-6">
+          <Banner tone="warning" title="有未保存的修改">
+            下方表单已变动,请点击底部“保存设置”同步到后端。
+          </Banner>
+        </div>
+      )}
 
       <Card title="大模型 API">
         <div className="space-y-4">
@@ -243,9 +316,9 @@ export function Settings() {
           )}
 
           {saveError && (
-            <div className="text-helper text-red-600">
-              保存到后端失败:{saveError}
-            </div>
+            <Banner tone="error" title="保存到后端失败">
+              {saveError}
+            </Banner>
           )}
         </div>
       </Card>
@@ -337,9 +410,14 @@ export function Settings() {
         </Card>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={save} disabled={loadingStatus}>
-          {saved ? '已保存' : '保存设置'}
+      <div className="flex justify-end gap-2">
+        <Button
+          onClick={() => void save()}
+          disabled={loadingStatus || !isDirty}
+          variant={isDirty ? 'primary' : 'outline'}
+          title={!isDirty ? '当前无变化,无需保存' : '保存到后端'}
+        >
+          {saved ? '已保存' : isDirty ? '保存设置' : '无需保存'}
         </Button>
       </div>
 

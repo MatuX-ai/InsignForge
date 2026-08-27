@@ -12,18 +12,30 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { Button } from '../components/Button';
+import { Banner } from '../components/Banner';
+import { useDialog } from '../components/Dialog';
 import type { Project, HistoryArchives } from '../types';
 
 type FilterStatus = 'all' | 'completed' | 'analyzing' | 'failed' | 'draft';
+type SortBy = 'time_desc' | 'time_asc' | 'heat_desc' | 'competitors_desc';
+
+const SORT_LABEL: Record<SortBy, string> = {
+  time_desc: '最新优先',
+  time_asc: '最早优先',
+  heat_desc: '热度 ↓',
+  competitors_desc: '竞品数 ↓',
+};
 
 export function History() {
   const navigate = useNavigate();
+  const dialog = useDialog();
   const [projects, setProjects] = useState<Project[]>([]);
   const [archives, setArchives] = useState<HistoryArchives>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
+  const [sortBy, setSortBy] = useState<SortBy>('time_desc');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // 加载项目列表 + 历史文档归档状态
@@ -54,9 +66,9 @@ export function History() {
     }
   };
 
-  // 搜索 + 筛选
+  // 搜索 + 筛选 + 排序
   const filteredProjects = useMemo(() => {
-    return projects.filter((p) => {
+    const filtered = projects.filter((p) => {
       // 状态筛选
       if (filterStatus !== 'all' && p.status !== filterStatus) return false;
       // 关键词搜索
@@ -70,7 +82,33 @@ export function History() {
       }
       return true;
     });
-  }, [projects, searchQuery, filterStatus]);
+
+    const getHeat = (p: Project): number => {
+      if (p.status !== 'completed' || !p.report) return -1;
+      return (p.report as { market_heat: { heat_score: number } }).market_heat.heat_score;
+    };
+    const getCompetitorCount = (p: Project): number => {
+      if (p.status !== 'completed' || !p.report) return -1;
+      return (p.report as { competitors: unknown[] }).competitors.length;
+    };
+    const getTime = (p: Project): number =>
+      new Date(p.created_at).getTime();
+
+    const sorted = [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'time_desc':
+          return getTime(b) - getTime(a);
+        case 'time_asc':
+          return getTime(a) - getTime(b);
+        case 'heat_desc':
+          return getHeat(b) - getHeat(a);
+        case 'competitors_desc':
+          return getCompetitorCount(b) - getCompetitorCount(a);
+      }
+    });
+
+    return sorted;
+  }, [projects, searchQuery, filterStatus, sortBy]);
 
   // 统计各状态数量
   const statusCounts = useMemo(() => {
@@ -91,13 +129,24 @@ export function History() {
 
   // 删除项目
   const handleDelete = async (projectId: string, projectName: string) => {
-    if (!confirm(`确定删除项目"${projectName}"吗?此操作不可恢复。`)) return;
+    const ok = await dialog.confirm({
+      title: '删除项目',
+      message: `确定删除项目"${projectName}"吗?\n此操作不可恢复。`,
+      primaryLabel: '删除',
+      secondaryLabel: '取消',
+      tone: 'danger',
+    });
+    if (!ok) return;
     setDeletingId(projectId);
     try {
       await api.deleteProject(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (err) {
-      alert(`删除失败:${err instanceof Error ? err.message : String(err)}`);
+      await dialog.alert({
+        title: '删除失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
     } finally {
       setDeletingId(null);
     }
@@ -141,6 +190,28 @@ export function History() {
               </button>
             )}
           </div>
+
+          {/* 排序 */}
+          <div className="flex items-center gap-2 sm:w-auto">
+            <label
+              htmlFor="history-sort"
+              className="text-helper text-text-secondary shrink-0"
+            >
+              排序
+            </label>
+            <select
+              id="history-sort"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortBy)}
+              className="h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
+            >
+              {(Object.keys(SORT_LABEL) as SortBy[]).map((k) => (
+                <option key={k} value={k}>
+                  {SORT_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* 状态筛选标签 */}
@@ -164,14 +235,10 @@ export function History() {
 
       {/* 错误提示 */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-card p-4 mb-6 text-red-400 backdrop-blur-sm">
-          加载失败:{error}
-          <button
-            onClick={loadProjects}
-            className="ml-3 text-primary hover:underline text-sm"
-          >
-            重试
-          </button>
+        <div className="mb-6">
+          <Banner tone="error" title="加载失败" action={{ label: '重试', onClick: loadProjects }}>
+            {error}
+          </Banner>
         </div>
       )}
 
@@ -257,6 +324,7 @@ function ProjectCard({
   deleting: boolean;
 }) {
   const navigate = useNavigate();
+  const dialog = useDialog();
 
   const handleClick = () => {
     navigate(`/report/${project.id}`);
@@ -266,13 +334,21 @@ function ProjectCard({
   const handleOpenFile = async (file: string) => {
     if (!archive) return;
     if (!window.insightforge?.openPath) {
-      alert('仅桌面端支持直接打开归档文件');
+      await dialog.alert({
+        title: '桌面端专属功能',
+        message: '仅桌面端支持直接打开归档文件。',
+        tone: 'warning',
+      });
       return;
     }
     const fullPath = `${archive.dir}\\${file}`;
     const res = await window.insightforge.openPath(fullPath);
     if (!res?.ok) {
-      alert(`打开失败:${res?.message ?? '未知错误'}`);
+      await dialog.alert({
+        title: '打开失败',
+        message: res?.message ?? '未知错误',
+        tone: 'danger',
+      });
     }
   };
 
@@ -280,12 +356,20 @@ function ProjectCard({
   const handleOpenDir = async () => {
     if (!archive) return;
     if (!window.insightforge?.openPath) {
-      alert('仅桌面端支持打开历史文档目录');
+      await dialog.alert({
+        title: '桌面端专属功能',
+        message: '仅桌面端支持打开历史文档目录。',
+        tone: 'warning',
+      });
       return;
     }
     const res = await window.insightforge.openPath(archive.dir);
     if (!res?.ok) {
-      alert(`打开失败:${res?.message ?? '未知错误'}`);
+      await dialog.alert({
+        title: '打开失败',
+        message: res?.message ?? '未知错误',
+        tone: 'danger',
+      });
     }
   };
 
@@ -303,7 +387,11 @@ function ProjectCard({
       });
       navigate(`/discuss/${res.session.id}`);
     } catch (err) {
-      alert(`创建讨论失败:${err instanceof Error ? err.message : String(err)}`);
+      await dialog.alert({
+        title: '创建讨论失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
     }
   };
 

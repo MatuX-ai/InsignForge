@@ -19,10 +19,12 @@ import { Settings } from './pages/Settings';
 import { Readme } from './pages/Readme';
 import { Faq } from './pages/Faq';
 import { OnboardingModal } from './components/OnboardingModal';
+import { DialogProvider } from './components/Dialog';
 
 export function App() {
   return (
     <BrowserRouter>
+      <DialogProvider>
       <div className="min-h-screen flex flex-col bg-bg">
         <TopBar />
         <Routes>
@@ -47,6 +49,7 @@ export function App() {
         {/* 首次启动引导弹窗: 未配置 LLM API Key 时弹出 */}
         <OnboardingModal onConfigured={() => {}} />
       </div>
+      </DialogProvider>
     </BrowserRouter>
   );
 }

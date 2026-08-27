@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
+import { Banner } from '../components/Banner';
+import { useDialog } from '../components/Dialog';
 import { api } from '../lib/api';
 import type {
   CanvasGroup,
@@ -78,6 +80,7 @@ function parseQuickEdit(input: string): { oldText: string; newText: string } | n
 
 export function Discuss() {
   const [sessions, setSessions] = useState<DiscussionSession[] | null>(null);
+  const dialog = useDialog();
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [session, setSession] = useState<DiscussionSession | null>(null);
   const [job, setJob] = useState<DiscussionChatJob | null>(null);
@@ -502,7 +505,13 @@ export function Discuss() {
 
   const deleteSession = async () => {
     if (!currentId || !session) return;
-    if (!window.confirm(`删除梳理「${session.title}」?画布与对话将一并清除。`)) return;
+    const ok = await dialog.confirm({
+      title: '删除梳理',
+      message: `删除梳理「${session.title}」?\n画布与对话将一并清除,不可恢复。`,
+      primaryLabel: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.deleteDiscussion(currentId);
       await backToList();
@@ -519,7 +528,12 @@ export function Discuss() {
       setNotice('画布还没有要点,先和 AI 讨论收敛一下再验证');
       return;
     }
-    if (!window.confirm('将基于当前画布创建一个新项目并开始市场调研,确定继续吗?')) return;
+    const ok = await dialog.confirm({
+      title: '创建调研项目',
+      message: '将基于当前画布创建一个新项目并开始市场调研,确定继续吗?',
+      primaryLabel: '开始调研',
+    });
+    if (!ok) return;
     setError(null);
     setNotice(null);
     setValidating(true);
@@ -569,7 +583,7 @@ export function Discuss() {
           和 AI 边聊边梳理,把模糊想法收敛成结构化要点画布,可随时增删改与重组
         </p>
 
-        {error && <div className="text-helper text-red-600 mb-4">{error}</div>}
+        {error && <div className="mb-4"><Banner tone="error">{error}</Banner></div>}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* 新建 */}
@@ -701,54 +715,16 @@ export function Discuss() {
         </button>
       </div>
 
-      {/* 快捷改要点歧义选择: 多条精确匹配时让用户点选要改哪条 */}
-      {quickEditAmbiguous && (
-        <div className="mb-3 border border-amber-500/30 bg-amber-500/10 rounded-card p-4 backdrop-blur-sm">
-          <div className="flex items-start gap-2 mb-1">
-            <span className="text-[15px] leading-6">⚠️</span>
-            <div>
-              <div className="text-[14px] font-medium text-amber-300">
-                有 {quickEditAmbiguous.candidates.length} 条要点完全匹配「
-                {quickEditAmbiguous.oldText}」,请选择要修改哪条:
-              </div>
-              <div className="text-helper text-amber-400 mt-0.5">
-                将改为:「{quickEditAmbiguous.newText}」
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-col gap-1.5 max-h-[260px] overflow-y-auto">
-            {quickEditAmbiguous.candidates.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => void applyQuickEditSelect(c.id)}
-                className="text-left px-3 py-2 bg-card-solid/50 border border-amber-500/30 rounded-lg hover:border-primary/50 hover:bg-primary/10 transition-all flex items-start gap-2"
-              >
-                {c.group && (
-                  <span className="shrink-0 mt-0.5 text-label text-text-secondary bg-hover-bg border border-border rounded px-1.5 py-0.5">
-                    {c.group}
-                  </span>
-                )}
-                <span className="flex-1 min-w-0 text-[13px] leading-5 text-text-primary break-words">
-                  {c.text}
-                </span>
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setQuickEditAmbiguous(null)}
-            className="mt-3 text-helper text-text-secondary hover:text-text-primary"
-          >
-            取消
-          </button>
+      {error && <div className="mb-3"><Banner tone="error">{error}</Banner></div>}
+      {notice && (
+        <div className="mb-3">
+          <Banner tone="success" onClose={() => setNotice(null)}>
+            {notice}
+          </Banner>
         </div>
       )}
 
-      {error && <div className="text-helper text-red-600 mb-3 whitespace-pre-wrap">{error}</div>}
-      {notice && <div className="text-helper text-green-600 mb-3">{notice}</div>}
-
-      {/* 快捷改要点歧义选择: 思维导图式按分组树状展示 */}
+      {/* 快捷改要点歧义选择: 思维导图式按分组树状展示 + 搜索过滤 */}
       {quickEditAmbiguous && (
         <div className="mb-3 border border-amber-500/30 bg-amber-500/10 rounded-lg p-3 backdrop-blur-sm">
           <div className="text-body text-amber-300 font-medium mb-1">
@@ -896,23 +872,38 @@ export function Discuss() {
               </div>
             )}
             {session.messages.map((m, i) => (
-              <div
-                key={i}
-                className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`max-w-[88%] px-3 py-2 text-[14px] leading-6 whitespace-pre-wrap rounded-lg ${
-                    m.role === 'user'
-                      ? 'bg-gradient-to-r from-primary to-primary-dark text-white'
-                      : 'bg-hover-bg text-text-primary'
-                  }`}
-                >
-                  {m.content}
-                </div>
-              </div>
+              <ChatBubble
+                role={m.role}
+                content={m.content}
+                createdAt={m.created_at}
+                onCopied={() => setNotice('已复制到剪贴板')}
+              />
             ))}
           </div>
           <div className="p-3 border-t border-border flex flex-col gap-2">
+            {/* 快捷 prompt 模板 - 仅在空输入时展示 */}
+            {!chatInput.trim() && (
+              <div className="flex flex-wrap gap-2 mb-1">
+                {(
+                  [
+                    '帮我梳理这个项目的商业模式',
+                    '从用户视角列出 3 个核心痛点',
+                    '对比现有 3 个同类产品的差异化机会',
+                    '生成 10 条 MVP 验证问题清单',
+                  ] as const
+                ).map((tmpl) => (
+                  <button
+                    key={tmpl}
+                    type="button"
+                    onClick={() => setChatInput(tmpl)}
+                    className="text-helper px-3 py-1 rounded-full border border-border bg-card-solid/40 text-text-secondary hover:text-primary hover:border-primary/40 transition-colors"
+                  >
+                    💡 {tmpl}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <textarea
               placeholder="输入想法或提问…快捷改要点:把「原要点文本」改成「新内容」"
               value={chatInput}
@@ -926,17 +917,118 @@ export function Discuss() {
               }}
               className="w-full min-h-[72px] p-3 text-[14px] leading-5 text-text-primary bg-card-solid/50 border border-border rounded-lg resize-y focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-text-tertiary"
             />
-            <div className="text-helper text-text-secondary">
-              快捷改要点:{'把「原要点文本」改成「新内容」'}· 即时生效,无需等待 AI
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-helper text-text-secondary">
+                快捷改要点:{'把「原要点文本」改成「新内容」'}· 即时生效,无需等待 AI
+              </div>
+              <div
+                className={`text-label shrink-0 tabular-nums ${
+                  chatInput.length > 1800
+                    ? 'text-amber-400'
+                    : chatInput.length > 1500
+                      ? 'text-primary-light'
+                      : 'text-text-tertiary'
+                }`}
+                aria-label="字符计数"
+              >
+                {chatInput.length} / 2000
+              </div>
             </div>
-            <Button onClick={() => void send()} disabled={!chatInput.trim() || running}>
-              发送
-            </Button>
+            <div className="flex justify-end">
+              <Button onClick={() => void send()} disabled={!chatInput.trim() || running}>
+                发送 <span className="ml-1 text-helper opacity-70">⏎</span>
+              </Button>
+            </div>
           </div>
         </div>
       </div>
     </main>
   );
+}
+
+/**
+ * 聊天气泡 - 加相对时间 + AI 消息复制按钮
+ */
+function ChatBubble({
+  role,
+  content,
+  createdAt,
+  onCopied,
+}: {
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  onCopied: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const isUser = role === 'user';
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = content;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    onCopied();
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const time = formatRelativeTime(createdAt);
+
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
+      <div
+        className={`max-w-[88%] flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}
+      >
+        <div
+          className={`relative px-3 py-2 text-[14px] leading-6 whitespace-pre-wrap rounded-lg ${
+            isUser
+              ? 'bg-gradient-to-r from-primary to-primary-dark text-white'
+              : 'bg-hover-bg text-text-primary'
+          }`}
+        >
+          {content}
+        </div>
+        <div
+          className={`flex items-center gap-2 text-label text-text-tertiary opacity-60 group-hover:opacity-100 transition-opacity ${
+            isUser ? 'flex-row-reverse' : ''
+          }`}
+        >
+          <span title={new Date(createdAt).toLocaleString()}>{time}</span>
+          {!isUser && (
+            <button
+              type="button"
+              onClick={() => void copy()}
+              aria-label="复制消息"
+              className="hover:text-text-primary transition-colors"
+            >
+              {copied ? '✓ 已复制' : '📋 复制'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 相对时间格式化 - "刚刚" / "3 分钟前" / "2 小时前" / "8/15" */
+function formatRelativeTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return '';
+  const diff = Date.now() - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 /** 画布面板:分组卡片网格 */
@@ -1017,6 +1109,7 @@ function GroupCard({
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(group.title);
   const [newPoint, setNewPoint] = useState('');
+  const dialog = useDialog();
 
   const commitRename = () => {
     if (disabled) {
@@ -1076,8 +1169,14 @@ function GroupCard({
           type="button"
           title="删除分组"
           disabled={disabled}
-          onClick={() => {
-            if (window.confirm(`删除分组「${group.title}」及其 ${group.points.length} 个要点?`)) {
+          onClick={async () => {
+            const ok = await dialog.confirm({
+              title: '删除分组',
+              message: `删除分组「${group.title}」及其 ${group.points.length} 个要点?\n此操作不可恢复。`,
+              primaryLabel: '删除',
+              tone: 'danger',
+            });
+            if (ok) {
               void onApply([{ op: 'delete_group', group_id: group.id }]);
             }
           }}

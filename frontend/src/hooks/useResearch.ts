@@ -1,6 +1,10 @@
 /**
  * 调研 Hook - 封装"触发调研 + 轮询状态 + 获取报告"全流程
  * 前端设计文档 §6.2 明确使用简单轮询(每 3 秒),不用 WebSocket
+ *
+ * 错误恢复策略:
+ *   - triggerResearch 瞬时失败自动重试 3 次(1s/2s/4s 指数退避)
+ *   - 用户也可通过 UI 的"重试"按钮手动触发
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../lib/api';
@@ -13,11 +17,18 @@ interface UseResearchReturn {
   error: string | null;
   /** 业务错误码(如 MISSING_API_KEY),与 error 同步出现 */
   errorCode: ErrorCode | null;
+  /** 当前自动重试的尝试次数(0 = 未在重试) */
+  retryAttempt: number;
   trigger: (projectId: string) => Promise<void>;
+  /** 手动重试 - 用最近一次的 projectId */
+  retry: () => Promise<void>;
   reset: () => void;
 }
 
 const POLL_INTERVAL = 3000; // 3s,按前端设计文档 §6.2
+const MAX_AUTO_RETRIES = 3;
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
 export function useResearch(): UseResearchReturn {
   const [status, setStatus] = useState<ResearchStatus | null>(null);
@@ -25,6 +36,7 @@ export function useResearch(): UseResearchReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const projectIdRef = useRef<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
@@ -42,6 +54,7 @@ export function useResearch(): UseResearchReturn {
     setError(null);
     setErrorCode(null);
     setLoading(false);
+    setRetryAttempt(0);
     projectIdRef.current = null;
   }, [stop]);
 
@@ -71,27 +84,74 @@ export function useResearch(): UseResearchReturn {
     }
   }, [stop]);
 
+  /**
+   * 触发调研,内部对网络瞬时错误做指数退避自动重试。
+   * 业务错误(MISSING_API_KEY 等)由后端抛出且不会恢复,不重试。
+   */
   const trigger = useCallback(
     async (projectId: string) => {
-      try {
-        reset();
-        setLoading(true);
-        projectIdRef.current = projectId;
-        await api.triggerResearch(projectId);
-        // 立即拉一次,然后开始轮询
-        await poll();
-        timerRef.current = window.setInterval(poll, POLL_INTERVAL);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        setErrorCode(null);
-        setLoading(false);
+      reset();
+      setLoading(true);
+      projectIdRef.current = projectId;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
+        if (attempt > 0) {
+          setRetryAttempt(attempt);
+          // 指数退避 1s / 2s / 4s
+          await sleep(1000 * Math.pow(2, attempt - 1));
+        }
+        try {
+          await api.triggerResearch(projectId);
+          setRetryAttempt(0);
+          // 立即拉一次,然后开始轮询
+          await poll();
+          timerRef.current = window.setInterval(poll, POLL_INTERVAL);
+          return;
+        } catch (err) {
+          lastErr = err;
+          // 后端业务错误不重试
+          const msg = err instanceof Error ? err.message : String(err);
+          if (
+            msg.includes('MISSING_API_KEY') ||
+            msg.includes('API Key') ||
+            msg.includes('LLM')
+          ) {
+            setError(msg);
+            setErrorCode(null);
+            setLoading(false);
+            setRetryAttempt(0);
+            return;
+          }
+        }
       }
+      // 全部失败
+      setError(lastErr instanceof Error ? lastErr.message : String(lastErr));
+      setErrorCode(null);
+      setLoading(false);
+      setRetryAttempt(0);
     },
     [poll, reset]
   );
 
+  /** 手动重试 - 用最近一次的 projectId */
+  const retry = useCallback(async () => {
+    const pid = projectIdRef.current;
+    if (pid === null) return;
+    await trigger(pid);
+  }, [trigger]);
+
   // 卸载时清理
   useEffect(() => stop, [stop]);
 
-  return { status, report, loading, error, errorCode, trigger, reset };
+  return {
+    status,
+    report,
+    loading,
+    error,
+    errorCode,
+    retryAttempt,
+    trigger,
+    retry,
+    reset,
+  };
 }
