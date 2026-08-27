@@ -35,6 +35,15 @@ jobs:
       - name: 安装依赖 (workspaces)
         run: npm ci
 
+      - name: 构建依赖包 (core / mcp-server)
+        # 其他 workspace 通过 @insightforge/core 与 @insightforge/mcp-server
+        # import 源代码,如果 dist/ 不存在则 typecheck 会报
+        # "Cannot find module ... or its corresponding type declarations"。
+        # 这里先产出 dist 与类型声明,保证后续 typecheck 与 build 能找到包。
+        run: |
+          npm run build --workspace=@insightforge/core
+          npm run build --workspace=@insightforge/mcp-server
+
       - name: 类型检查 (所有 workspace)
         run: npm run typecheck
 
