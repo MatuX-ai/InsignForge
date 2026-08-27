@@ -12,6 +12,22 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: 'v1.2.0',
+    date: '2026-08',
+    title: 'UX 优化、可访问性加固、CI 修复',
+    highlights: [
+      'Report 页新增"复制并重新调研"按钮,一键创建同描述新项目并重新调研',
+      'PDF/Markdown/JSON 导出显示阶段进度条(连接后端 / 后端生成中 / 下载中)与已用秒数',
+      'Modal 完整 focus trap(Tab 循环 + 还原焦点),Dropdown / ReportToc 键盘导航',
+      'iframe 全面沙箱化(sandbox=""),剪贴板双路径降级(Clipboard API + 隐藏 textarea)',
+      'useResearch 指数退避自动重试,网络瞬断不丢调研任务',
+      'Report / Settings / History / Discuss / Home / TopBar 全栈体验打磨',
+      '语义化设计 token(text-body / text-helper 等),视觉层次更清晰',
+      'CI 修复:typecheck 前先构建 core / mcp-server 依赖包',
+    ],
+    channel: 'all',
+  },
+  {
     version: 'v1.0.2',
     date: '2026-08',
     title: '桌面版打包流水线修复',
