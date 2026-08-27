@@ -1,3 +1,47 @@
+# InsightForge v1.2.0
+
+UX 优化、可访问性加固、CI 修复。
+
+## 新特性
+
+### 复制并重新调研
+
+Report 页顶部按钮区新增 “📋 复制并重新调研” 按钮，一键基于现有项目描述创建新项目并重新运行调研，避免覆盖原报告，适合多角度验证场景。
+
+### 导出进度反馈
+
+PDF/Markdown/JSON 导出时顶部出现进度卡片，明示三个阶段（连接后端 / 后端生成中 / 下载到本地）与已用秒数。长报告生成时 ≥8 秒后会提示 “⏳ 大报告生成时间可能稍长，请勿关闭页面…”，完成后 2 秒内显示 “✅ 已下载到本地” 的绿色提示。
+
+## 体验打磨
+
+- **Report 页**：8 个导出/分享/流程按钮重新组织为 3 组（分享导出 / 流程动作 / 高级产物）；节区重新排序并加分割线；横滚章节导航 (TOC) 带 scroll-spy 联动与键盘导航。
+- **Settings 页**：未保存变更指示器 + Revert 按钮 + beforeunload 页面离开守卫。
+- **History 页**：4 种排序（最新/最早/热度↓/竞品数↓）。
+- **Discuss 页**：输入框为空时提示 4 个模板；实时字数计数器；发送按钮 ⏎ 提示。
+- **Home 页**：调研创建过程中联动展示自动重试进度（指数退避 1s/2s/4s）。
+- **TopBar**：移动端汉堡菜单 + 完整 a11y 属性。
+
+## 可访问性与健壮性
+
+- **Modal**：完整 focus trap（自动聚焦 + Tab/Shift+Tab 循环 + 关闭还原焦点）。
+- **Dropdown**：↑↓ 菜单项循环跳过 disabled + 关闭后焦点还原到 trigger。
+- **ReportToc**：方向键 ←→/Home/End 导航 + roving tabindex + scroll-spy。
+- **iframe**（落地页预览）：改为 `sandbox=""` 完全沙箱化。
+- **剪贴板**：`shareLink` / `copySummary` 在非 HTTPS 或旧浏览器自动降级到 `textarea + execCommand`，且不管成败保证 textarea 节点被清理。
+- **useResearch**：网络瞬时错误指数退避自动重试 3 次；同时暴露手动 `retry()`。
+
+## 设计系统
+
+- 引入语义化 token：`text-body` / `text-helper` / `text-label` / `text-title` / `text-section` / `text-display`。
+- Card 组件新增 5 种 `tone` 变体（default / primary / success / danger / warning）。
+- Button / Report 页全面替换魔法字号为 token。
+
+## 工程
+
+- **CI 修复**（`.github/workflows/ci.yml`）：最近 3 次 CI 都因 “Cannot find module '@insightforge/core'” 失败，原因是其他 workspace typecheck 时 core/mcp-server 还未产出 `dist/`。已在 typecheck step 之前构建依赖包。
+
+---
+
 # InsightForge v1.1.0
 
 扩展市场调研工具到更多场景：商业计划书生成、技术选型、前端设计文档、团队讨论协作。
