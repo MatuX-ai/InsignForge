@@ -1,6 +1,6 @@
 {
   "name": "insightforge-backend",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "InsightForge 个人版后端 API - 市场调研与报告生成",
   "main": "dist/index.js",
   "type": "module",

@@ -23,10 +23,10 @@ dsh-plugin/**/package-lock.json
 !**/.env.example
 
 # ---------- 运行时 / 数据库 ----------
-data/*.db
-data/*.db-journal
-data/*.db-shm
-data/*.db-wal
+**/data/*.db
+**/data/*.db-journal
+**/data/*.db-shm
+**/data/*.db-wal
 data/build.log
 data/logs/
 data/*.log

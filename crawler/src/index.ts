@@ -16,6 +16,4 @@
  * 启动方式(占位脚本,实际不执行):
  *   cd crawler && npm install && npm run dev
  */
-console.log('[crawler] 独立 Crawlee 服务占位。当前数据采集已内嵌至后端 services/search。');
-console.log('[crawler] 后续 v1.2 将引入 Crawlee + Playwright 处理 JS 渲染页面。');
 export {};
