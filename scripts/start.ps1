@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # ============================================================
 # InsightForge 一键启动脚本 (PowerShell)
 # 适用于 Windows / PowerShell 5.1+ / PowerShell Core

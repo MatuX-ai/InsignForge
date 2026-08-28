@@ -1,10 +1,10 @@
-# scripts/release-npm.ps1
-# 发布 insightforge-dsh-plugin v0.1.0 到 npm
-# 用法(在交互 PowerShell 终端执行):
+﻿# scripts/release-npm.ps1
+# Publish insightforge-dsh-plugin v0.1.0 to npm
+# Usage (run in an interactive PowerShell terminal):
 #   cd e:\Dady_project\InsignForge\dsh-plugin\insightforge-dsh-plugin
 #   powershell -ExecutionPolicy Bypass -File ..\..\scripts\release-npm.ps1
 #
-# 也可通过环境变量提供凭证:
+# You can also provide credentials via environment variables:
 #   $env:NPM_TOKEN = 'npm_xxx'
 #   powershell -ExecutionPolicy Bypass -File ..\..\scripts\release-npm.ps1
 
@@ -24,9 +24,9 @@ Write-Host "Plugin dir: $pluginDir"
 
 Set-Location $pluginDir
 
-# ---------- 1. 预检查 ----------
+# ---------- 1. Pre-checks ----------
 Write-Host ''
-Write-Host '[1/5] 预检查' -ForegroundColor Cyan
+Write-Host '[1/5] Pre-checks' -ForegroundColor Cyan
 
 $pkgJson = Get-Content 'package.json' -Raw | ConvertFrom-Json
 Write-Host "  Name:    $($pkgJson.name)"
@@ -44,14 +44,14 @@ if (-not (Test-Path 'dist/index.js')) {
     if ($LASTEXITCODE -ne 0) { Write-Host 'BUILD FAILED' -ForegroundColor Red; exit 1 }
 }
 
-# ---------- 2. 登录检查 ----------
+# ---------- 2. Login check ----------
 Write-Host ''
-Write-Host '[2/5] npm 凭证' -ForegroundColor Cyan
+Write-Host '[2/5] npm credentials' -ForegroundColor Cyan
 
 $authToken = $env:NPM_TOKEN
 if ($authToken) {
     Write-Host '  Using NPM_TOKEN env var' -ForegroundColor Green
-    # 写入临时 .npmrc
+    # Write temporary .npmrc
     $npmrc = Join-Path $env:USERPROFILE '.npmrc'
     $existing = if (Test-Path $npmrc) { Get-Content $npmrc -Raw } else { '' }
     $cleaned = ($existing -split "`n" | Where-Object { $_ -notmatch '^//registry.npmjs.org/:_authToken=' }) -join "`n"
@@ -73,9 +73,9 @@ if ($authToken) {
     }
 }
 
-# ---------- 3. 干跑 ----------
+# ---------- 3. Dry run ----------
 Write-Host ''
-Write-Host '[3/5] 干跑 npm publish (--dry-run)' -ForegroundColor Cyan
+Write-Host '[3/5] Dry-run npm publish (--dry-run)' -ForegroundColor Cyan
 & $npmCmd publish --dry-run --access public 2>&1 | Select-Object -Last 40
 
 if ($LASTEXITCODE -ne 0) {
@@ -84,9 +84,9 @@ if ($LASTEXITCODE -ne 0) {
     if ($ans -notin @('y', 'Y', 'yes', 'YES')) { exit 1 }
 }
 
-# ---------- 4. 确认 ----------
+# ---------- 4. Confirm ----------
 Write-Host ''
-Write-Host '[4/5] 确认发布' -ForegroundColor Cyan
+Write-Host '[4/5] Confirm publish' -ForegroundColor Cyan
 Write-Host "  Name:    $($pkgJson.name)" -ForegroundColor White
 Write-Host "  Version: $($pkgJson.version)" -ForegroundColor White
 Write-Host "  Access:  public" -ForegroundColor White
@@ -96,7 +96,7 @@ if ($ans -notin @('y', 'Y', 'yes', 'YES')) {
     exit 0
 }
 
-# ---------- 5. 发布 ----------
+# ---------- 5. Publish ----------
 Write-Host ''
 Write-Host '[5/5] npm publish' -ForegroundColor Cyan
 & $npmCmd publish --access public 2>&1 | Tee-Object -Variable pubOut

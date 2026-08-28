@@ -1,24 +1,24 @@
-# scripts/release-github.ps1
-# 发布 InsightForge dsh Plugin v0.1.0 到 GitHub Releases
-# 用法(在交互 PowerShell 终端执行):
+﻿# scripts/release-github.ps1
+# Publish InsightForge dsh Plugin v0.1.0 to GitHub Releases
+# Usage (run in an interactive PowerShell terminal):
 #   cd e:\Dady_project\InsignForge
 #   powershell -ExecutionPolicy Bypass -File .\scripts\release-github.ps1
 #
-# 也可通过环境变量提供凭证:
+# You can also provide credentials via environment variables:
 #   $env:GH_TOKEN = 'ghp_xxx'
 #   powershell -ExecutionPolicy Bypass -File .\scripts\release-github.ps1
 
 $ErrorActionPreference = 'Stop'
 
-# ---------- 配置 ----------
+# ---------- Configuration ----------
 $repo = 'MatuX-ai/InsignForge'
 $tag = 'v0.1.0'
 $commit = '27050afeb14d25090f3f9d4313ecd0d49c4748f8'
 
-# ---------- 凭证 ----------
+# ---------- Credentials ----------
 $token = $env:GH_TOKEN
 if (-not $token) {
-    $secure = Read-Host -Prompt 'GitHub PAT (scope: public_repo 或 repo)' -AsSecureString
+    $secure = Read-Host -Prompt 'GitHub PAT (scope: public_repo or repo)' -AsSecureString
     if (-not $secure) { Write-Host 'EMPTY TOKEN, ABORT' -ForegroundColor Red; exit 1 }
     $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     $token = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
@@ -32,7 +32,7 @@ $headers = @{
     'X-GitHub-Api-Version'  = '2022-11-28'
 }
 
-# ---------- 幂等检查 ----------
+# ---------- Idempotency check ----------
 Write-Host ''
 Write-Host ">>> GET /repos/$repo/releases/tags/$tag" -ForegroundColor Cyan
 try {
@@ -64,7 +64,7 @@ try {
     Write-Host 'No existing release, creating new' -ForegroundColor Green
 }
 
-# ---------- 创建 Release ----------
+# ---------- Create release ----------
 $body = @"
 ## InsightForge dsh Plugin v0.1.0
 
