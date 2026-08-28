@@ -50,9 +50,18 @@ export const DiscussionOperationSchema = z.discriminatedUnion('op', [
   }),
 ]);
 
-export const DiscussionTurnSchema = z.object({
-  reply: z.string().min(1),
-  operations: z.array(DiscussionOperationSchema).max(20),
-});
+export const DiscussionTurnSchema = z
+  .object({
+    reply: z.string().min(1),
+    operations: z.array(DiscussionOperationSchema).max(20),
+  })
+  /**
+   * 描述作为 retryMetrics 的 fallback schemaName:
+   *   若调用方忘记传 schemaName,这里会 fallback 到 "DiscussionTurn",
+   *   比 "unknown" 更可读,便于运维定位。
+   * 实际生产中调用方都已传具体 schemaName(DiscussionChatResponse / DiscussionOrganizeResponse),
+   * 这个 describe 只是保险措施。
+   */
+  .describe('DiscussionTurn');
 
 export type DiscussionTurn = z.infer<typeof DiscussionTurnSchema>;

@@ -10,7 +10,7 @@
  *   - 按 projectId 维护,使用 Map
  *   - 进程重启后状态丢失 (符合 MVP 场景)
  */
-import { chatJson } from './llm/LLMClient.js';
+import { chatJsonWithSchemaRetry } from './llm/LLMClient.js';
 import { ProjectService } from './ProjectService.js';
 import { ReportService } from './ReportService.js';
 import { logger } from '../logger.js';
@@ -44,7 +44,7 @@ const jobs = new Map<string, TechSelectionJob>();
 function newRunningJob(): TechSelectionJob {
   return {
     status: 'running',
-    current_step: '正在分析项目需求,搜索最新开源技术方案...',
+    current_step: '正在分析产品形态与项目约束...',
     started_at: new Date().toISOString(),
     finished_at: null,
     error_code: null,
@@ -123,33 +123,25 @@ async function runSelection(
       throw new Error('报告尚未生成,请先完成市场调研');
     }
 
-    job.current_step = '正在调用 AI 分析技术选型...';
+    job.current_step = '正在基于项目约束评估技术栈方案...';
 
     const reportJson = JSON.stringify(reportRecord.report_data, null, 2);
-    const raw = await chatJson<unknown>(
+    const result = await chatJsonWithSchemaRetry<TechSelectionResponse>(
       TECH_SELECTION_SYSTEM,
       buildTechSelectionUserPrompt(
         project.description,
         reportJson,
         project.name
       ),
-      { temperature: 0.5, maxTokens: 8000 }
+      TechSelectionResponseSchema,
+      {
+        schemaName: 'TechSelectionResponse',
+        temperature: 0.25,
+        maxTokens: 12000,
+      }
     );
 
-    const parsed = TechSelectionResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw },
-        '技术选型结果结构校验失败'
-      );
-      throw new Error(
-        `AI 返回的技术选型结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .join('; ')}`
-      );
-    }
-
-    job.result = parsed.data;
+    job.result = result;
     job.status = 'success';
     job.current_step = '技术选型分析完成,请选择方案';
     job.finished_at = new Date().toISOString();

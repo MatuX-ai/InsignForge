@@ -99,8 +99,25 @@ export interface ResearchStatus {
 export type ErrorCode = 'MISSING_API_KEY' | 'INTERNAL_ERROR';
 
 /** LLM 配置状态(后端 /api/v1/settings/llm 返回) */
+/**
+ * LLM 提供商 id 联合类型(与后端 backend/src/services/llm/providers.ts 一一对应)
+ * 新增 Provider 时需同步扩展这里以及前端 lib/llmProviders.ts。
+ */
+export type LlmProvider =
+  | 'deepseek'
+  | 'openai'
+  | 'ollama'
+  | 'zhipu'
+  | 'qwen'
+  | 'moonshot'
+  | 'yi'
+  | 'MiniMax'
+  | 'hunyuan'
+  | 'sensenova'
+  | 'stepfun';
+
 export interface LlmStatus {
-  provider: 'deepseek' | 'openai' | 'ollama';
+  provider: LlmProvider;
   model: string;
   baseUrl: string;
   hasApiKey: boolean;
@@ -108,12 +125,12 @@ export interface LlmStatus {
   /** 当前生效 provider 的 key 掩码(如 sk-****1234),用于设置页回显确认 */
   apiKeyMask: string;
   /** 各 provider 是否已配置 key(用于指示器状态展示) */
-  providerKeyMap: Record<'deepseek' | 'openai' | 'ollama', boolean>;
+  providerKeyMap: Record<LlmProvider, boolean>;
 }
 
 /** LLM 预设模型选项(用于下拉选择) */
 export interface LlmModelOption {
-  provider: 'deepseek' | 'openai' | 'ollama';
+  provider: LlmProvider;
   model: string;
   label: string;
 }
@@ -160,16 +177,49 @@ export interface TechOption {
   learning_curve: 'low' | 'medium' | 'high';
 }
 
+export interface FrontendStack {
+  framework: TechOption;
+  ui: TechOption;
+  state_management: TechOption;
+  build_tool: TechOption;
+}
+
+export interface BackendStack {
+  language: TechOption;
+  framework: TechOption;
+  auth: TechOption;
+  middleware: TechOption;
+}
+
+export interface DatabaseStack {
+  primary: TechOption;
+  cache?: TechOption;
+  search?: TechOption;
+}
+
+export interface DeploymentStack {
+  container: TechOption;
+  ci_cd: TechOption;
+  hosting: TechOption;
+}
+
+export interface ThirdPartyOption extends TechOption {
+  category: string;
+}
+
 export interface TechStackPlan {
   plan_id: 'plan_a' | 'plan_b' | 'plan_c';
   plan_name: string;
   tagline: string;
   suitable_for: string;
-  frontend: TechOption;
-  backend: TechOption;
-  database: TechOption;
-  deployment: TechOption;
-  third_party: TechOption[];
+  architecture: string;
+  fit_score: number;
+  risk_level: 'low' | 'medium' | 'high';
+  frontend: FrontendStack;
+  backend: BackendStack;
+  database: DatabaseStack;
+  deployment: DeploymentStack;
+  third_party: ThirdPartyOption[];
   pros: string[];
   cons: string[];
   estimated_weeks: number;
@@ -184,6 +234,8 @@ export interface TechSelectionJob {
   error_message: string | null;
   result: {
     recommended: 'plan_a' | 'plan_b' | 'plan_c';
+    recommendation_reason: string;
+    key_assumptions: string[];
     plans: TechStackPlan[];
     decision_dimensions: string[];
   } | null;
@@ -302,7 +354,7 @@ declare global {
 
 /** 应用设置(前端 localStorage) */
 export interface AppSettings {
-  llmProvider: 'deepseek' | 'openai' | 'ollama';
+  llmProvider: LlmProvider;
   llmModel: string;
   searchProvider: 'openserp' | 'serpapi';
   searchUrl: string;

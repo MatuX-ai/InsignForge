@@ -23,7 +23,8 @@
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
     "puppeteer-core": "^25.8.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",

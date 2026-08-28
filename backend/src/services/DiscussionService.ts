@@ -13,7 +13,11 @@
  */
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/index.js';
-import { chatJson, chatComplete, chatWithTools } from './llm/LLMClient.js';
+import {
+  chatWithTools,
+  chatJsonWithSchemaRetry,
+  chatCompleteWithSchemaRetry,
+} from './llm/LLMClient.js';
 import type { ChatMessage, ChatTool } from './llm/LLMClient.js';
 import { DiscussionResearch } from './DiscussionResearch.js';
 import { logger } from '../logger.js';
@@ -26,6 +30,7 @@ import {
   buildOrganizePrompt,
 } from '../agents/prompts/discussionFacilitator.js';
 import { DiscussionTurnSchema } from '../agents/schemas/DiscussionSchema.js';
+import type { DiscussionTurn } from '../agents/schemas/DiscussionSchema.js';
 import type {
   DiscussionCanvas,
   DiscussionChatJob,
@@ -90,16 +95,6 @@ const DISCUSSION_TOOLS: ChatTool[] = [
     },
   },
 ];
-
-/** 解析 LLM 返回的 JSON(兼容 ```json 包裹) */
-function parseLlmJson(content: string): unknown {
-  const cleaned = content
-    .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '');
-  return JSON.parse(cleaned);
-}
 
 /** 任务 Map: sessionId -> ChatJob */
 const jobs = new Map<string, DiscussionChatJob>();
@@ -424,32 +419,42 @@ async function runChat(
     const history = excludeLatestUserMessage(session.messages, message);
 
     // 组装对话: 系统提示(含工具说明) + 用户提示(画布/历史/本轮发言)
+    const systemPrompt = DISCUSSION_FACILITATOR_SYSTEM + DISCUSSION_TOOL_HINT;
+    const userPrompt = buildDiscussionUserPrompt({
+      mode: session.mode,
+      canvas: session.canvas,
+      history,
+      userMessage: message,
+    });
     const messages: ChatMessage[] = [
-      { role: 'system', content: DISCUSSION_FACILITATOR_SYSTEM + DISCUSSION_TOOL_HINT },
-      {
-        role: 'user',
-        content: buildDiscussionUserPrompt({
-          mode: session.mode,
-          canvas: session.canvas,
-          history,
-          userMessage: message,
-        }),
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
     ];
 
     // 第一轮: 带工具,让模型决定是否需要实时市场数据
-    let rawContent = '';
     const toolDataMessages: string[] = [];
     const res = await chatWithTools(messages, DISCUSSION_TOOLS, {
       temperature: 0.5,
       maxTokens: 4096,
     });
 
+    let turn: DiscussionTurn;
     if (res.toolCalls.length === 0) {
-      // 未调用工具: 期望直接输出 {reply, operations} JSON
-      rawContent = res.content;
+      // 未调用工具: 单轮 chatJsonWithSchemaRetry(轻量,不需要重复跑 chatComplete)
+      job.current_step = '正在梳理并更新画布...';
+      turn = await chatJsonWithSchemaRetry<DiscussionTurn>(
+        systemPrompt,
+        userPrompt,
+        DiscussionTurnSchema,
+        {
+          schemaName: 'DiscussionChatResponse',
+          temperature: 0.5,
+          maxTokens: 4096,
+          maxRetries: 2,
+        }
+      );
     } else {
-      // 有工具调用: 执行工具,把结果回填
+      // 有工具调用: 执行工具,把结果回填到 messages 数组(不重新执行工具)
       job.current_step = '正在检索实时市场数据...';
       messages.push({
         role: 'assistant',
@@ -481,35 +486,21 @@ async function runChat(
         messages.push({ role: 'tool', tool_call_id: tc.id, content: resultText });
       }
 
-      // 最终答复: 用 jsonMode 强制 JSON,且不再附带 tools,避免模型继续对话或输出散文
+      // 最终 JSON 轮: 用 chatCompleteWithSchemaRetry 复用含工具结果的 messages 数组,
+      // 只对 JSON 输出做 retry,不重新跑工具调用(避免市场调研 API 被多次请求)
       job.current_step = '正在整合调研数据生成结论...';
-      rawContent = await chatComplete(messages, {
-        jsonMode: true,
-        temperature: 0.5,
-        maxTokens: 4096,
-      });
-    }
-
-    if (!rawContent) {
-      throw new Error('AI 未能给出有效答复,请重试');
-    }
-
-    // 校验 LLM 输出结构(工具调用轮没有 jsonMode,手动解析)
-    const parsed = DiscussionTurnSchema.safeParse(parseLlmJson(rawContent));
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw: rawContent },
-        '讨论输出结构校验失败'
-      );
-      throw new Error(
-        `AI 输出结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .slice(0, 3)
-          .join('; ')}`
+      turn = await chatCompleteWithSchemaRetry<DiscussionTurn>(
+        messages,
+        DiscussionTurnSchema,
+        {
+          schemaName: 'DiscussionChatResponse',
+          temperature: 0.5,
+          maxTokens: 4096,
+          maxRetries: 2,
+        }
       );
     }
 
-    const turn = parsed.data;
     const fresh = DiscussionService.getById(sessionId);
     if (!fresh) throw new Error('会话不存在');
 
@@ -578,31 +569,23 @@ async function runOrganize(
 
     job.current_step = '正在分析要点并整理画布...';
 
-    const raw = await chatJson<unknown>(
+    // 使用 chatJsonWithSchemaRetry 自动获得 schema 注入 + 重试 + 指标记录
+    const turn = await chatJsonWithSchemaRetry<DiscussionTurn>(
       DISCUSSION_ORGANIZE_SYSTEM,
       buildOrganizePrompt({
         mode: session.mode,
         canvas: session.canvas,
         instruction,
       }),
-      { temperature: 0.3, maxTokens: 4096 }
+      DiscussionTurnSchema,
+      {
+        schemaName: 'DiscussionOrganizeResponse',
+        temperature: 0.3,
+        maxTokens: 4096,
+        maxRetries: 2,
+      }
     );
 
-    const parsed = DiscussionTurnSchema.safeParse(raw);
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw: raw as string },
-        '画布整理输出结构校验失败'
-      );
-      throw new Error(
-        `AI 输出结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .slice(0, 3)
-          .join('; ')}`
-      );
-    }
-
-    const turn = parsed.data;
     const fresh = DiscussionService.getById(sessionId);
     if (!fresh) throw new Error('会话不存在');
 

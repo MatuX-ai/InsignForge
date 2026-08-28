@@ -17,7 +17,22 @@ import type { Config, ResolvedConfig } from './config-types.js';
  */
 const ConfigSchema = z
   .object({
-    llmProvider: z.enum(['deepseek', 'openai', 'ollama']).default('deepseek'),
+    // LLM provider 动态枚举与后端注册表保持一致
+    llmProvider: z
+      .enum([
+        'deepseek',
+        'openai',
+        'ollama',
+        'zhipu',
+        'qwen',
+        'moonshot',
+        'yi',
+        'MiniMax',
+        'hunyuan',
+        'sensenova',
+        'stepfun',
+      ])
+      .default('deepseek'),
     llmApiKey: z.string().min(1, 'llmApiKey 必填'),
     llmBaseUrl: z.string().url().optional(),
     llmModel: z.string().min(1).optional(),

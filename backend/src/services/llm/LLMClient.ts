@@ -8,6 +8,8 @@
  * - Ollama:    http://localhost:11434   (本地模型,无需 Key)
  */
 import OpenAI from 'openai';
+import { ZodError } from 'zod';
+import type { ZodTypeAny } from 'zod';
 import { getLlmBaseUrl } from '../../config.js';
 import { logger } from '../../logger.js';
 import {
@@ -15,6 +17,12 @@ import {
   getCurrentModel,
   resolveLlmApiKey,
 } from '../SettingsService.js';
+import { getLlmProvider } from './providers.js';
+import { buildSchemaPromptSection } from './schemaPrompt.js';
+import {
+  recordRetryResult,
+} from './retryMetrics.js';
+import { formatRetryFeedback } from './retryUtils.js';
 
 /**
  * 缺少 LLM API Key 时抛出的专用错误
@@ -26,7 +34,7 @@ export class MissingLlmApiKeyError extends Error {
 
   constructor(provider: string) {
     super(
-      `未配置 ${provider} 的 API Key,请前往「设置」页面填写,或在后端 .env 中配置 ${provider.toUpperCase()}_API_KEY 后重启服务`
+      `未配置 ${provider} 的 API Key,请前往「设置」页面填写,或在后端 .env 中配置对应环境变量后重启服务`
     );
     this.name = 'MissingLlmApiKeyError';
     this.provider = provider;
@@ -48,8 +56,11 @@ function getClient(): OpenAI {
   _client = null;
   _clientProvider = provider;
 
+  const meta = getLlmProvider(provider);
+  const requiresKey = meta?.requiresKey !== false; // 默认为 true
+
   const apiKey = resolveLlmApiKey();
-  if (!apiKey && provider !== 'ollama') {
+  if (requiresKey && !apiKey) {
     logger.warn(
       { provider },
       `${provider} 未配置 API Key,LLM 调用将失败`
@@ -65,6 +76,24 @@ function getClient(): OpenAI {
   });
 
   return _client;
+}
+
+/**
+ * 默认思考模式控制:某些 Provider(如 DeepSeek V4)默认开启思考且会把 content 写入
+ * reasoning_content,导致 JSON 解析失败。通过 providers.ts 中标记 supportsThinkingDisable
+ * 的 provider,统一使用 extra_body.thinking.type='disabled' 关闭。
+ * 其他 Provider(Qwen / GLM / Kimi / Yi)的思考模式由模型本身或显式模型名控制,
+ * 此处不做强制处理。
+ */
+function applyThinkingDisable<T extends Record<string, unknown>>(
+  provider: ReturnType<typeof getCurrentProvider>,
+  params: T
+): void {
+  const meta = getLlmProvider(provider);
+  if (meta?.supportsThinkingDisable) {
+    (params as unknown as { thinking?: { type: 'enabled' | 'disabled' } }).thinking =
+      { type: 'disabled' };
+  }
 }
 
 /**
@@ -123,13 +152,8 @@ export async function chatComplete(
     params.response_format = { type: 'json_object' };
   }
 
-  // DeepSeek 默认开启思考模式,返回内容会写入 reasoning_content 而 content 为空
-  // InsightForge 是结构化 JSON 输出场景,不需要思考阶段,通过 extra_body 禁用思考
-  // 其他 provider(OpenAI / Ollama)忽略该字段不会出错
-  if (provider === 'deepseek') {
-    (params as unknown as { thinking?: { type: 'enabled' | 'disabled' } }).thinking =
-      { type: 'disabled' };
-  }
+  // 调用 Provider 元数据驱动的 thinking 禁用策略(目前仅 DeepSeek)
+  applyThinkingDisable(provider, params as unknown as Record<string, unknown>);
 
   try {
     const res = await client.chat.completions.create(params);
@@ -180,6 +204,115 @@ export async function chatJson<T>(
     );
   }
 }
+
+/**
+ * 带 schema 校验失败自动重试的 JSON 对话
+ *
+ * 为什么需要:
+ *   LLM 在生成结构化 JSON 时,即便 prompt 已给出 schema 示例,仍可能因为:
+ *     1. 字段名拼写不一致(name vs plan_name、container vs containerization 等)
+ *     2. 必填字段缺失
+ *     3. 长度/枚举校验不通过(reason 太短、风险等级写错等)
+ *   一次性失败会让用户在前端看到"任务失败"的错误,体感很差。
+ *   本方法在校验失败时,把 zod 的具体 issues 作为反馈注入到 user prompt,
+ *   重新调用 LLM 让它修正,最多 retry 次(默认 2 次,即总共 3 次尝试)。
+ *
+ * 新增能力(v1.2):
+ *   - options.schemaName: 传入后会自动 (a) 追加到注入的 JSON Schema 标题,
+ *     (b) 作为重试率指标聚合的 key。强烈建议各调用方传入可读名称
+ *   - options.injectSchema (默认 true): 自动把 zod schema 转成的 JSON Schema
+ *     拼到 system prompt 末尾,避免手写示例与运行时校验漂移
+ *   - options.maxRetries (默认 2): 最大重试次数。与 chatCompleteWithSchemaRetry 保持一致,
+ *     都是 options 字段,避免调用方混淆两种签名。
+ *
+ * 适用场景:
+ *   任何「chatJson + Zod schema.safeParse」的简单结构化输出流。
+ *   复杂的多轮/工具调用流程(如 DiscussionService.runChat)不适用,
+ *   应使用 chatCompleteWithSchemaRetry。
+ */
+export async function chatJsonWithSchemaRetry<T>(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: ZodTypeAny,
+  options: Omit<ChatOptions, 'jsonMode'> & {
+    /** schema 标识,同时用于 prompt 中的标题与指标聚合 key */
+    schemaName?: string;
+    /** 是否自动把 JSON Schema 拼到 system prompt 末尾,默认 true */
+    injectSchema?: boolean;
+    /** 最大重试次数,默认 2(总共 3 次尝试) */
+    maxRetries?: number;
+  } = {}
+): Promise<T> {
+  const schemaName =
+    options.schemaName?.trim() ||
+    (typeof schema.description === 'string' ? schema.description : '') ||
+    'unknown';
+  const injectSchema = options.injectSchema !== false;
+  const maxRetries = options.maxRetries ?? 2;
+
+  // 在 system prompt 末尾追加 JSON Schema 段(与手写示例互补)
+  const enrichedSystem = injectSchema
+    ? `${systemPrompt}\n\n${buildSchemaPromptSection(schema, { schemaName })}`
+    : systemPrompt;
+
+  let lastError: ZodError | null = null;
+  let currentUserPrompt = userPrompt;
+  let attempts = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    attempts = attempt + 1;
+    const raw = await chatJson<unknown>(enrichedSystem, currentUserPrompt, options);
+    const parsed = schema.safeParse(raw);
+    if (parsed.success) {
+      if (attempt > 0) {
+        logger.info(
+          { attempt: attempt + 1, schemaName },
+          'LLM 输出经重试后通过 schema 校验'
+        );
+      }
+      recordRetryResult({ schemaName, attempts, succeeded: true });
+      return parsed.data as T;
+    }
+
+    lastError = parsed.error;
+    logger.warn(
+      {
+        attempt: attempt + 1,
+        schemaName,
+        issueCount: parsed.error.issues.length,
+        sampleIssues: parsed.error.issues.slice(0, 5).map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      },
+      'LLM 输出未通过 schema 校验'
+    );
+
+    if (attempt >= maxRetries) break;
+
+    // 把 zod 错误作为反馈注入到 user prompt,引导模型修正(共享 formatRetryFeedback)
+    currentUserPrompt = `${userPrompt}\n\n${formatRetryFeedback(parsed.error, schemaName)}`;
+  }
+
+  recordRetryResult({ schemaName, attempts, succeeded: false });
+  const finalDetail = lastError!.issues
+    .slice(0, 20)
+    .map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`)
+    .join('; ');
+  throw new Error(
+    `LLM 输出未通过 schema 校验(已重试 ${maxRetries} 次):${finalDetail}`
+  );
+}
+
+/**
+ * 带 schema 校验失败自动重试的多轮对话 JSON 收尾
+ *
+ * 实现已拆分到 [./chatCompleteRetry.ts](./chatCompleteRetry.ts),此处 re-export 保持向后兼容。
+ * 拆分原因:`chatCompleteWithSchemaRetry` 与 `chatComplete` 同文件时,函数体内调用
+ * `chatComplete(...)` 是模块内调用,vi.mock 无法替换。拆到独立文件后,通过 import
+ * 绑定进入,测试可以正常 mock LLMClient 的 chatComplete。
+ */
+export { chatCompleteWithSchemaRetry } from './chatCompleteRetry.js';
 
 // ---------- 工具调用(function calling) ----------
 
@@ -233,12 +366,8 @@ export async function chatWithTools(
     tools: tools as Parameters<typeof client.chat.completions.create>[0]['tools'],
   };
 
-  // DeepSeek 默认开启思考模式,结构化工具编排场景不需要,禁用思考
-  if (provider === 'deepseek') {
-    (params as unknown as { thinking?: { type: 'enabled' | 'disabled' } }).thinking = {
-      type: 'disabled',
-    };
-  }
+  // Provider 元数据驱动的 thinking 禁用策略
+  applyThinkingDisable(provider, params as unknown as Record<string, unknown>);
 
   try {
     const res = await client.chat.completions.create(params);

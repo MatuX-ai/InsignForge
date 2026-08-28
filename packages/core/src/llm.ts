@@ -18,16 +18,33 @@ let _clientConfig: Config | null = null;
 function resolveBaseUrl(cfg: Config): string {
   // 显式配置优先
   if (cfg.llmBaseUrl) return cfg.llmBaseUrl;
-  if (cfg.llmProvider === 'ollama') {
-    return process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
+  switch (cfg.llmProvider) {
+    case 'ollama':
+      return process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
+    case 'deepseek':
+      return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
+    case 'openai':
+      return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com';
+    // 国产大模型(OpenAI 兼容协议)的默认 baseUrl
+    case 'zhipu':
+      return process.env.ZHIPU_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4';
+    case 'qwen':
+      return process.env.QWEN_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    case 'moonshot':
+      return process.env.MOONSHOT_BASE_URL ?? 'https://api.moonshot.cn/v1';
+    case 'yi':
+      return process.env.YI_BASE_URL ?? 'https://api.lingyiwanwu.com/v1';
+    case 'MiniMax':
+      return process.env.MINIMAX_BASE_URL ?? 'https://api.MiniMax.chat/v1';
+    case 'hunyuan':
+      return process.env.HUNYUAN_BASE_URL ?? 'https://api.hunyuan.tencent.com/v1';
+    case 'sensenova':
+      return process.env.SENSENOVA_BASE_URL ?? 'https://api.sensenova.cn/compatible-mode/v1';
+    case 'stepfun':
+      return process.env.STEPFUN_BASE_URL ?? 'https://api.stepfun.com/v1';
+    default:
+      return 'https://api.openai.com';
   }
-  if (cfg.llmProvider === 'deepseek') {
-    return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-  }
-  if (cfg.llmProvider === 'openai') {
-    return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com';
-  }
-  return 'https://api.openai.com';
 }
 
 function resolveModel(cfg: Config): string {

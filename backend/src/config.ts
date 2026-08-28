@@ -6,6 +6,11 @@ import 'dotenv/config';
 import { z } from 'zod';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  ALL_LLM_PROVIDER_IDS,
+  getLlmProvider,
+  type LlmProviderId,
+} from './services/llm/providers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,11 +21,26 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3001),
 
   // LLM
-  LLM_PROVIDER: z.enum(['deepseek', 'openai', 'ollama']).default('deepseek'),
+  // 动态枚举,与 backend/src/services/llm/providers.ts 中 LLM_PROVIDERS 一致
+  LLM_PROVIDER: z.enum(ALL_LLM_PROVIDER_IDS as [LlmProviderId, ...LlmProviderId[]]).default('deepseek'),
   LLM_MODEL: z.string().default('deepseek-chat'),
   DEEPSEEK_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
+  // Ollama 本地模型地址(可选,也可写 OLLAMA_BASE_URL)
   OLLAMA_BASE_URL: z.string().default('http://localhost:11434'),
+  // 国产大模型 API Key(OpenAI 兼容协议)
+  ZHIPU_API_KEY: z.string().optional(),
+  QWEN_API_KEY: z.string().optional(),
+  MOONSHOT_API_KEY: z.string().optional(),
+  YI_API_KEY: z.string().optional(),
+  // MiniMax MiniMax
+  MINIMAX_API_KEY: z.string().optional(),
+  // 腾讯混元
+  HUNYUAN_API_KEY: z.string().optional(),
+  // 商汤日日新
+  SENSENOVA_API_KEY: z.string().optional(),
+  // 阶跃星辰
+  STEPFUN_API_KEY: z.string().optional(),
 
   // 搜索
   SEARCH_PROVIDER: z.enum(['openserp', 'serpapi']).default('openserp'),
@@ -59,22 +79,22 @@ export const config = {
 } as const;
 
 // 派生计算 LLM API Key
+// 使用 providers.ts 注册表统一管理;新增 provider 时只需在注册表中添加项即可
 export function getLlmApiKey(): string {
-  switch (config.LLM_PROVIDER) {
-    case 'deepseek':
-      return config.DEEPSEEK_API_KEY ?? '';
-    case 'openai':
-      return config.OPENAI_API_KEY ?? '';
-    case 'ollama':
-      return ''; // Ollama 通常无需 key
-    default:
-      return '';
-  }
+  const meta = getLlmProvider(config.LLM_PROVIDER as LlmProviderId);
+  if (!meta) return '';
+  // Ollama 本地走 OLLAMA_BASE_URL,而非 _API_KEY,这里返回空
+  if (meta.id === 'ollama') return '';
+  const raw = (config as Record<string, unknown>)[meta.envKeyName];
+  return typeof raw === 'string' ? raw : '';
 }
 
 export function getLlmBaseUrl(): string {
-  if (config.LLM_PROVIDER === 'ollama') return config.OLLAMA_BASE_URL;
-  if (config.LLM_PROVIDER === 'deepseek') return 'https://api.deepseek.com';
-  if (config.LLM_PROVIDER === 'openai') return 'https://api.openai.com';
-  return 'https://api.openai.com';
+  const meta = getLlmProvider(config.LLM_PROVIDER as LlmProviderId);
+  if (!meta) return 'https://api.openai.com/v1';
+  // Ollama 允许通过 OLLAMA_BASE_URL 自定义(剥离末尾 /v1 让调用方按需拼接)
+  if (meta.id === 'ollama') {
+    return (config.OLLAMA_BASE_URL ?? 'http://localhost:11434').replace(/\/v1\/?$/, '');
+  }
+  return meta.baseUrl;
 }

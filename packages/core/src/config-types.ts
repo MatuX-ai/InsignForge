@@ -3,8 +3,22 @@
  *
  * SDK 是框架无关的纯算法库,Config 由调用方显式注入;
  * 运行时校验见 ./config.ts 中的 validateConfig()。
+ *
+ * LlmProvider 与后端 backend/src/services/llm/providers.ts 中的注册表保持同步
  */
-export type LlmProvider = 'deepseek' | 'openai' | 'ollama';
+export type LlmProvider =
+  | 'deepseek'
+  | 'openai'
+  | 'ollama'
+  // 国产大模型(OpenAI 兼容协议)
+  | 'zhipu'
+  | 'qwen'
+  | 'moonshot'
+  | 'yi'
+  | 'MiniMax'
+  | 'hunyuan'
+  | 'sensenova'
+  | 'stepfun';
 export type SearchProvider = 'openserp' | 'serpapi';
 
 /** SDK 完整运行时配置(全字段已解析默认值) */

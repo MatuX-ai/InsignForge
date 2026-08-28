@@ -13,7 +13,7 @@
  *
  * 复用调研的"异步触发 + 状态轮询"模式,与 DocService 一致
  */
-import { chatJson } from './llm/LLMClient.js';
+import { chatJsonWithSchemaRetry } from './llm/LLMClient.js';
 import { ProjectService } from './ProjectService.js';
 import { ReportService } from './ReportService.js';
 import { logger } from '../logger.js';
@@ -126,31 +126,21 @@ async function runBp(projectId: string, job: BpJob): Promise<void> {
     // ---------- 1. 调用 LLM 生成结构化 JSON ----------
     // 单次调用同时生成 12 份文档;maxTokens 必须够大,12 份 ~24K token
     const reportJson = JSON.stringify(reportRecord.report_data, null, 2);
-    const raw = await chatJson<unknown>(
+    const bp = await chatJsonWithSchemaRetry<ValidatedBpResponse>(
       BP_GENERATION_SYSTEM,
       buildBpGenerationUserPrompt(
         project.description,
         reportJson,
         project.name
       ),
-      { temperature: 0.4, maxTokens: 24000 }
+      BpResponseSchema,
+      {
+        schemaName: 'BusinessPlanResponse',
+        temperature: 0.4,
+        maxTokens: 24000,
+      }
     );
 
-    // ---------- 2. schema 校验 ----------
-    const parsed = BpResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw },
-        '商业计划书结构校验失败'
-      );
-      throw new Error(
-        `LLM 返回的商业计划书结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .join('; ')}`
-      );
-    }
-
-    const bp: ValidatedBpResponse = parsed.data;
     job.progress = TOTAL;
     job.current_step = '正在打包文档...';
 

@@ -13,6 +13,7 @@ import { marketNeedsRouter } from './market-needs.js';
 import { settingsRouter } from './settings.js';
 import { discussionsRouter } from './discussions.js';
 import { archivesRouter } from './archives.js';
+import { adminRouter } from './admin.js';
 
 export const apiRouter = Router();
 
@@ -29,3 +30,4 @@ apiRouter.use('/market-needs', marketNeedsRouter);
 apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/discussions', discussionsRouter);
 apiRouter.use('/archives', archivesRouter);
+apiRouter.use('/admin', adminRouter);

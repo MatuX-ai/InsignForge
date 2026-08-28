@@ -13,8 +13,17 @@ import path from 'node:path';
 import { config, getLlmBaseUrl } from '../config.js';
 import { logger } from '../logger.js';
 import { resetLlmClient } from './llm/LLMClient.js';
+import {
+  getLlmProvider,
+  defaultModelFor,
+  type LlmProviderId,
+} from './llm/providers.js';
 
-export type LlmProvider = 'deepseek' | 'openai' | 'ollama';
+/**
+ * 重新导出 LlmProvider 类型别名,保持对外 API 不变
+ * 实际定义在 ./llm/providers.ts (统一注册表)
+ */
+export type LlmProvider = LlmProviderId;
 export type SearchProvider = 'openserp' | 'serpapi';
 
 /**
@@ -26,6 +35,7 @@ export type SearchProvider = 'openserp' | 'serpapi';
  */
 let runtimeProvider: LlmProvider | null = null;
 let runtimeModel: string | null = null;
+/** 记录已设置过的 provider key,用于 providerKeyMap 合并计算 */
 const runtimeApiKeys: Partial<Record<LlmProvider, string>> = {};
 
 // ---- 搜索运行时覆盖(设置页可热更新,无需重启) ----
@@ -93,16 +103,12 @@ export function resolveLlmApiKey(): string {
 
 /** 从 .env 加载的 config 中读取指定 provider 的 key */
 function configKeyFor(provider: LlmProvider): string {
-  switch (provider) {
-    case 'deepseek':
-      return config.DEEPSEEK_API_KEY ?? '';
-    case 'openai':
-      return config.OPENAI_API_KEY ?? '';
-    case 'ollama':
-      return ''; // Ollama 通常无需 key
-    default:
-      return '';
-  }
+  const meta = getLlmProvider(provider);
+  if (!meta) return '';
+  // Ollama / 无需 key 的 provider 返回空
+  if (!meta.requiresKey) return '';
+  const raw = (config as unknown as Record<string, unknown>)[meta.envKeyName];
+  return typeof raw === 'string' ? (raw as string) : '';
 }
 
 /**
@@ -178,43 +184,78 @@ function maskKey(key: string): string {
 
 /**
  * 查询当前 LLM 配置状态(key 仅返回掩码,不返回明文)
+ *
+ * providerKeyMap 的实现要点:
+ * - 若 provider 元数据 requiresKey=false(如 ollama),固定为 true
+ * - 否则看运行时覆盖 + .env 加载的 config,二者其一有非空 key 即视为"已配置"
+ * - 这样设置页"Provider 配置状态"面板才能区分各家是否已备好凭证
  */
 export function getLlmStatus(): LlmStatusInfo {
   const provider = getCurrentProvider();
   const model = getCurrentModel();
   const apiKey = resolveLlmApiKey();
-  const hasApiKey = provider === 'ollama' ? true : apiKey.length > 0;
+  const meta = getLlmProvider(provider);
+  // ollama / 不需 key 的 provider 一律视为 hasApiKey=true
+  const hasApiKey = meta && !meta.requiresKey ? true : apiKey.length > 0;
+
+  // 构建 providerKeyMap:取注册表中所有 provider 元数据,逐个探测 .env 是否有 key
+  // 或运行时是否已经覆盖过;为兼容现有 providerKeyMap 类型(已收紧为 LlmProviderId 联合)
+  // 这里按需构造满足严格联合的对象。
+  const providerKeyMap = {} as Record<LlmProvider, boolean>;
+  for (const p of [
+    'deepseek',
+    'openai',
+    'ollama',
+    'zhipu',
+    'qwen',
+    'moonshot',
+    'yi',
+    'MiniMax',
+    'hunyuan',
+    'sensenova',
+    'stepfun',
+  ] as LlmProvider[]) {
+    const m = getLlmProvider(p);
+    if (!m) {
+      providerKeyMap[p] = false;
+      continue;
+    }
+    if (!m.requiresKey) {
+      providerKeyMap[p] = true; // 本地/无需 key 视为已配置
+      continue;
+    }
+    const envKey = configKeyFor(p);
+    providerKeyMap[p] = envKey.length > 0 || !!runtimeApiKeys[p];
+  }
+
   return {
     provider,
     model,
     baseUrl: resolveBaseUrl(),
     hasApiKey,
     runtimeOverride: runtimeProvider !== null || runtimeModel !== null,
-    apiKeyMask: hasApiKey && provider !== 'ollama' ? maskKey(apiKey) : '',
-    providerKeyMap: {
-      deepseek: configKeyFor('deepseek').length > 0 || !!runtimeApiKeys.deepseek,
-      openai: configKeyFor('openai').length > 0 || !!runtimeApiKeys.openai,
-      ollama: true,
-    },
+    apiKeyMask: hasApiKey && meta?.requiresKey ? maskKey(apiKey) : '',
+    providerKeyMap,
   };
 }
 
 function resolveBaseUrl(): string {
-  const provider = getCurrentProvider();
-  if (provider === 'ollama') return config.OLLAMA_BASE_URL;
-  if (provider === 'deepseek') return 'https://api.deepseek.com';
-  return 'https://api.openai.com';
+  // 复用 config.getLlmBaseUrl 的逻辑,避免在后端逻辑链上重复
+  return getLlmBaseUrl();
 }
 
 /**
  * 切换 provider / model(运行时立即生效)
  * - 不修改其他 provider 的 key
  * - 持久化 LLM_PROVIDER / LLM_MODEL 到 .env
+ * - 若新 provider 没有同名 model,自动采用该 provider 注册表中的默认 model
  */
 export function setLlmConfig(provider: LlmProvider, model: string): void {
   const prevProvider = getCurrentProvider();
   runtimeProvider = provider;
-  runtimeModel = model.trim().length > 0 ? model.trim() : 'deepseek-chat';
+  // 切换 provider 时:若 user 传的 model 为空,使用该 provider 的默认 model
+  const trimmed = model.trim();
+  runtimeModel = trimmed.length > 0 ? trimmed : defaultModelFor(provider);
 
   // 重建客户端单例
   resetLlmClient();
@@ -242,10 +283,27 @@ export function setLlmConfig(provider: LlmProvider, model: string): void {
  * - 持久化到 .env(失败仅记录日志,不抛错)
  *
  * 切换 provider 后,调用本函数只会更新新 provider 的 key,旧 provider 的 key 保留
+ *
+ * envKey:对应 provider 元数据 envKeyName(如 DEEPSEEK_API_KEY),
+ *        ollama 在这里写 OLLAMA_BASE_URL 以允许用户从设置页修改本地服务地址
  */
 export function setLlmApiKey(apiKey: string): void {
   const provider = getCurrentProvider();
+  const meta = getLlmProvider(provider);
   const trimmed = apiKey.trim();
+
+  if (meta && !meta.requiresKey) {
+    // ollama: apiKey 字段实际存放 baseUrl,不持久化到 OLLAMA_BASE_URL
+    // 这里仅校验,不动 .env(baseUrl 单独走 process.env / OLLAMA_BASE_URL)
+    if (trimmed.length > 0) {
+      logger.warn(
+        { provider },
+        `${provider} 不需要 API Key,该字段将被忽略(baseUrl 请直接修改 OLLAMA_BASE_URL 环境变量)`
+      );
+    }
+    return;
+  }
+
   if (trimmed.length > 0) {
     runtimeApiKeys[provider] = trimmed;
   } else {
@@ -258,7 +316,8 @@ export function setLlmApiKey(apiKey: string): void {
 
   // 持久化到 .env(失败不影响运行期)
   try {
-    const envKey = `${provider.toUpperCase()}_API_KEY`;
+    if (!meta) return;
+    const envKey = meta.envKeyName;
     const envPath = resolveEnvPath();
     updateEnvFile(envPath, envKey, trimmed);
     // 同时更新进程 env,避免某些代码路径直接读 process.env

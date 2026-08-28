@@ -2,15 +2,16 @@
  * Vitest 配置 - 后端单元测试
  *
  * 关注范围 (本轮覆盖):
- *   - tests/zip.test.ts           手写 ZIP 编码器的安全断言 + CRC32 正确性
- *   - tests/DocSchema.test.ts     开发文档 JSON schema 校验
- *   - tests/DocService.test.ts    DocService.trigger 去重 + 状态查询
+ *   - tests/zip.test.ts                手写 ZIP 编码器的安全断言 + CRC32 正确性
+ *   - tests/DocSchema.test.ts          开发文档 JSON schema 校验
+ *   - tests/DocService.test.ts         DocService.trigger 去重 + 状态查询
+ *   - tests/schemaPrompt.test.ts       zod → JSON Schema → prompt 片段
+ *   - tests/retryMetrics.test.ts       重试率指标聚合
  *
  * 设计:
  *   - node 环境 (无 DOM)
  *   - 全局 setup 不引入 DB / LLM,所有副作用通过 vi.mock 隔离
- *   - 覆盖率只统计 src/utils / src/agents/schemas / src/services/DocService.ts
- *     其余 service / api / index 不在本轮审计重点
+ *   - 覆盖率统计核心 LLM 工具链与 DocService;其余 service / api / index 不在本轮审计重点
  */
 import { defineConfig } from 'vitest/config';
 
@@ -29,6 +30,8 @@ export default defineConfig({
         'src/utils/zip.ts',
         'src/agents/schemas/DocSchema.ts',
         'src/services/DocService.ts',
+        'src/services/llm/schemaPrompt.ts',
+        'src/services/llm/retryMetrics.ts',
       ],
       // 仅关心真实覆盖率,本轮未覆盖的内部函数允许 0
       thresholds: {

@@ -12,7 +12,7 @@
  *   - 按 projectId + version 维护,使用 Map
  *   - 进程重启后状态丢失 (符合 MVP 场景)
  */
-import { chatJson } from './llm/LLMClient.js';
+import { chatJsonWithSchemaRetry } from './llm/LLMClient.js';
 import { ProjectService } from './ProjectService.js';
 import { ReportService } from './ReportService.js';
 import { TechSelectionService } from './TechSelectionService.js';
@@ -177,7 +177,7 @@ async function runDocs(
         : DOC_GENERATION_SYSTEM_FULL;
     const maxTokens = version === 'mvp' ? 15000 : 20000;
 
-    const raw = await chatJson<unknown>(
+    const docs = await chatJsonWithSchemaRetry<ValidatedDocsResponse>(
       systemPrompt,
       buildDocGenerationUserPrompt(
         project.description,
@@ -188,24 +188,14 @@ async function runDocs(
         frontendDesignJson,
         options.businessModel
       ),
-      { temperature: 0.4, maxTokens }
+      DocsResponseSchema,
+      {
+        schemaName: `DocResponse:${version}`,
+        temperature: 0.4,
+        maxTokens,
+      }
     );
 
-    // ---------- 3. schema 校验 ----------
-    const parsed = DocsResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw },
-        '开发文档结构校验失败'
-      );
-      throw new Error(
-        `LLM 返回的开发文档结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .join('; ')}`
-      );
-    }
-
-    const docs: ValidatedDocsResponse = parsed.data;
     job.progress = total;
     job.current_step = '正在打包文档...';
 

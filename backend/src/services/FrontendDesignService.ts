@@ -6,7 +6,7 @@
  *   2. 在内存中缓存结果,供前端轮询/复用
  *   3. 接收用户最终选择
  */
-import { chatJson } from './llm/LLMClient.js';
+import { chatJsonWithSchemaRetry } from './llm/LLMClient.js';
 import { ProjectService } from './ProjectService.js';
 import { ReportService } from './ReportService.js';
 import { logger } from '../logger.js';
@@ -105,30 +105,22 @@ async function runDesign(
     job.current_step = '正在调用 AI 生成前端设计方案...';
 
     const reportJson = JSON.stringify(reportRecord.report_data, null, 2);
-    const raw = await chatJson<unknown>(
+    const result = await chatJsonWithSchemaRetry<FrontendDesignResponse>(
       FRONTEND_DESIGN_SYSTEM,
       buildFrontendDesignUserPrompt(
         project.description,
         reportJson,
         project.name
       ),
-      { temperature: 0.6, maxTokens: 6000 }
+      FrontendDesignResponseSchema,
+      {
+        schemaName: 'FrontendDesignResponse',
+        temperature: 0.6,
+        maxTokens: 6000,
+      }
     );
 
-    const parsed = FrontendDesignResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      logger.error(
-        { err: parsed.error.format(), raw },
-        '前端设计方案结构校验失败'
-      );
-      throw new Error(
-        `AI 返回的前端设计方案结构不符合预期:${parsed.error.issues
-          .map((i) => `${i.path.join('.')}: ${i.message}`)
-          .join('; ')}`
-      );
-    }
-
-    job.result = parsed.data;
+    job.result = result;
     job.status = 'success';
     job.current_step = '前端设计方案生成完成,请选择方案';
     job.finished_at = new Date().toISOString();

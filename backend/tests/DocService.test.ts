@@ -15,7 +15,7 @@
  *   11. trigger: 同时 10 份文档被正确打包 (ZIP 长度 > 0)
  *
  * Mock 策略:
- *   - chatJson (LLMClient) → vi.fn() 控制返回值
+ *   - chatJsonWithSchemaRetry (LLMClient) → vi.fn() 控制返回值(替代 schema 校验与重试层)
  *   - ProjectService.getById → vi.fn() 控制项目查询
  *   - ReportService.getByProjectId → vi.fn() 控制报告查询
  *   - 用 vi.waitFor 等待 fire-and-forget 异步任务完成
@@ -24,8 +24,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock 依赖 (必须在 import DocService 之前)
 // vi.mock 会被 hoisted 到文件顶部
+// DocService v1.2 调用 chatJsonWithSchemaRetry(自带 schema 校验、重试与指标聚合)。
+// 为了让测试既能验证 service 处理逻辑,又不发起真实 LLM 请求,
+// 这里直接 mock chatJsonWithSchemaRetry:
+//   - 默认 mockResolvedValue 返回受控的 payload
+//   - 失败路径用 mockRejectedValue 模拟 schema 校验失败后的报错
 vi.mock('../src/services/llm/LLMClient.js', () => ({
-  chatJson: vi.fn(),
+  chatJsonWithSchemaRetry: vi.fn(),
 }));
 vi.mock('../src/services/ProjectService.js', () => ({
   ProjectService: {
@@ -60,11 +65,15 @@ vi.mock('../src/logger.js', () => ({
 
 import { DocService } from '../src/services/DocService.js';
 import { FULL_DOC_FILENAMES as DOC_FILENAMES } from '../src/agents/schemas/DocSchema.js';
-import { chatJson } from '../src/services/llm/LLMClient.js';
+import { chatJsonWithSchemaRetry } from '../src/services/llm/LLMClient.js';
 import { ProjectService } from '../src/services/ProjectService.js';
 import { ReportService } from '../src/services/ReportService.js';
+import {
+  resetMetrics as resetRetryMetrics,
+  stopRetryMetricsTimer,
+} from '../src/services/llm/retryMetrics.js';
 
-const mockChatJson = chatJson as unknown as ReturnType<typeof vi.fn>;
+const mockChatJson = chatJsonWithSchemaRetry as unknown as ReturnType<typeof vi.fn>;
 const mockProject = ProjectService as unknown as {
   getById: ReturnType<typeof vi.fn>;
 };
@@ -97,6 +106,8 @@ const llmSuccessPayload = () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetRetryMetrics();
+  stopRetryMetricsTimer();
   // 默认 mock: 项目存在、报告存在、LLM 返回 8 份合法文档
   mockProject.getById.mockImplementation((id: string) => fakeProject(id));
   mockReport.getByProjectId.mockImplementation((id: string) =>
@@ -188,7 +199,11 @@ describe('DocService.trigger - 错误路径', () => {
   });
 
   it('LLM 返回非法 schema → job 失败', async () => {
-    mockChatJson.mockResolvedValue({ documents: [] }); // 违反 min(1)
+    // 模拟生产环境中 chatJsonWithSchemaRetry 校验失败后抛出的错误:
+    //   “LLM 输出未通过 schema 校验(已重试 2 次):...” 与原版业务请求中“结构不符合预期”
+    //   同语义(mock 把“结构不符合预期”别名放在 message 中)。
+    const err = new Error('LLM 输出未通过 schema 校验(已重试 2 次):documents: 结构不符合预期');
+    mockChatJson.mockRejectedValue(err);
     DocService.trigger('p1');
     await vi.waitFor(() => DocService.getStatus('p1')?.status === 'failed');
     const job = DocService.getStatus('p1');
