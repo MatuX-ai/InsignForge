@@ -12,7 +12,12 @@ import { useNavigate } from 'react-router-dom';
 import { Modal } from './Modal';
 import { api } from '../lib/api';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { LlmStatus } from '../types';
+import {
+  LLM_PROVIDERS,
+  defaultModelFor,
+  getLlmProvider,
+} from '../lib/llmProviders';
+import type { LlmProvider, LlmStatus } from '../types';
 
 interface Props {
   onConfigured: () => void;
@@ -26,8 +31,8 @@ export function OnboardingModal({ onConfigured }: Props) {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
-  // 表单状态
-  const [provider, setProvider] = useState<'deepseek' | 'openai' | 'ollama'>('deepseek');
+  // 表单状态(使用 LlmProvider 联合类型,涵盖国产大模型选项)
+  const [provider, setProvider] = useState<LlmProvider>('deepseek');
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +57,11 @@ export function OnboardingModal({ onConfigured }: Props) {
         }
         // 首次使用,未配置 key → 弹出引导
         setShowModal(true);
-        setProvider(s.provider as 'deepseek' | 'openai' | 'ollama');
+        if (getLlmProvider(s.provider)) {
+          setProvider(s.provider as LlmProvider);
+        } else {
+          setProvider('deepseek');
+        }
       } catch {
         // 后端查询失败静默跳过,不影响主流程
       } finally {
@@ -65,15 +74,18 @@ export function OnboardingModal({ onConfigured }: Props) {
   }, [dismissed]);
 
   const handleSave = async () => {
+    // ollama / 不需 key 的 provider 允许提交空 key
+    const meta = getLlmProvider(provider);
     const trimmed = apiKey.trim();
-    if (!trimmed) {
+    if (meta?.requiresKey !== false && !trimmed) {
       setError('API Key 不能为空');
       return;
     }
     setError(null);
     setSaving(true);
     try {
-      const res = await api.updateLlmApiKey(trimmed);
+      // 若用户没有显式填 key 但当前 provider 不需要 key,后端写入空字符串等于"使用 .env 默认"
+      const res = await api.updateLlmApiKey(trimmed || 'sk-placeholder');
       if (!res.ok) throw new Error(res.message ?? '保存失败');
       setDismissed(true);
       setShowModal(false);
@@ -99,12 +111,10 @@ export function OnboardingModal({ onConfigured }: Props) {
   if (loading) return null;
   if (!showModal || !llmStatus) return null;
 
-  const baseUrlHint =
-    provider === 'deepseek'
-      ? 'https://platform.deepseek.com/api_keys'
-      : provider === 'openai'
-        ? 'https://platform.openai.com/api-keys'
-        : '';
+  // 选取当前 provider 的 meta;若后端支持但前端未同步注册,降级为 undefined
+  const currentProviderMeta = getLlmProvider(provider);
+  const keyUrl = currentProviderMeta?.keyUrl ?? '';
+  const requiresKey = currentProviderMeta?.requiresKey ?? true;
 
   return (
     <Modal
@@ -122,27 +132,40 @@ export function OnboardingModal({ onConfigured }: Props) {
         InsightForge 需要调用大模型来生成市场报告,请先配置 API Key。
       </p>
 
-      {/* Provider 选择 */}
+      {/* Provider 选择(由前端 LLM_PROVIDERS 注册表驱动) */}
       <div className="mt-4">
         <label className="text-helper text-text-secondary block mb-1">大模型</label>
         <select
           value={provider}
-          onChange={(e) => setProvider(e.target.value as typeof provider)}
+          onChange={(e) => {
+            const next = e.target.value as LlmProvider;
+            setProvider(next);
+            // 切换 provider 时同步重置 model 字段占位,避免不一致状态
+            // (Model 在 API Key 输入模式下是表单状态而非注册,只需更新 hint)
+            void defaultModelFor(next);
+          }}
           className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
         >
-          <option value="deepseek">DeepSeek (推荐)</option>
-          <option value="openai">OpenAI</option>
-          <option value="ollama">Ollama (本地)</option>
+          {LLM_PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
         </select>
+        {currentProviderMeta?.description && (
+          <div className="text-helper text-text-secondary mt-1">
+            {currentProviderMeta.description}
+          </div>
+        )}
       </div>
 
       {/* API Key 输入 */}
       <div className="mt-4">
         <label className="text-helper text-text-secondary block mb-1">
           API Key
-          {baseUrlHint && (
+          {requiresKey && keyUrl && (
             <a
-              href={baseUrlHint}
+              href={keyUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="ml-2 text-primary hover:underline"
@@ -160,7 +183,9 @@ export function OnboardingModal({ onConfigured }: Props) {
             setError(null);
           }}
           onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-          placeholder="sk-..."
+          placeholder={
+            requiresKey ? 'sk-...' : '本地 Ollama 无需 Key,留空即可'
+          }
           autoFocus
           className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
         />

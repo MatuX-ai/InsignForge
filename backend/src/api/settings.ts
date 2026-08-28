@@ -16,6 +16,10 @@ import {
   type LlmProvider,
   type SearchProvider,
 } from '../services/SettingsService.js';
+import {
+  ALL_LLM_PROVIDER_IDS,
+  type LlmProviderId,
+} from '../services/llm/providers.js';
 
 export const settingsRouter = Router();
 
@@ -27,9 +31,14 @@ settingsRouter.get(
   })
 );
 
-/** 切换 provider / model */
+/**
+ * 切换 provider / model
+ * provider 使用动态枚举(取自 providers.ts 注册表),新增 provider 时无需修改此处
+ */
 const configSchema = z.object({
-  provider: z.enum(['deepseek', 'openai', 'ollama']),
+  provider: z.enum(
+    ALL_LLM_PROVIDER_IDS as [LlmProviderId, ...LlmProviderId[]]
+  ),
   model: z.string().min(1, 'Model 不能为空').max(100),
 });
 

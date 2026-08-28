@@ -475,7 +475,7 @@ function ProjectCard({
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           {/* PDF 图标: 历史文档已生成时展示 */}
           {archiveFiles.length > 0 && (
             <button
@@ -490,14 +490,14 @@ function ProjectCard({
           <button
             type="button"
             onClick={(e) => void handleContinueDiscuss(e, project.id, project.name)}
-            className="px-3 py-1 text-xs rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
+            className="px-3 py-1 text-xs rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors whitespace-nowrap"
             title="继续探讨"
           >
             💬 继续探讨
           </button>
           <Link
             to={`/report/${project.id}`}
-            className="text-primary hover:underline text-[15px]"
+            className="text-primary hover:underline text-[15px] whitespace-nowrap"
           >
             {project.status === 'completed' ? '查看报告 →' : project.status === 'analyzing' ? '查看进度 →' : '开始调研 →'}
           </Link>

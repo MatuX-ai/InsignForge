@@ -8,7 +8,7 @@
  */
 import { useEffect, useState, useRef } from 'react';
 import { api } from '../lib/api';
-import type { TechStackPlan, TechSelectionJob } from '../types';
+import type { TechOption, TechStackPlan, TechSelectionJob } from '../types';
 
 interface Props {
   open: boolean;
@@ -19,6 +19,12 @@ interface Props {
 }
 
 const POLL_INTERVAL = 3000;
+
+const RISK_META = {
+  low: { label: '低风险', className: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+  medium: { label: '中风险', className: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+  high: { label: '高风险', className: 'text-red-400 bg-red-500/10 border-red-500/20' },
+} as const;
 
 export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Props) {
   const [job, setJob] = useState<TechSelectionJob | null>(null);
@@ -129,14 +135,14 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
   const recommended = job?.result?.recommended ?? null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full max-w-4xl max-h-[85vh] flex flex-col">
         {/* 头部 */}
         <div className="p-6 border-b border-border">
           <h2 className="text-section text-text-primary">技术选型建议</h2>
           <p className="text-helper text-text-secondary mt-1">
-            AI 基于项目需求和最新开源技术生态,为你推荐 3 套技术栈方案,请选择最适合的一套
+            AI 基于项目描述、市场调研与产品形态评估,为你生成 3 套差异明确的技术栈方案,请选择最适合的一套
           </p>
         </div>
 
@@ -147,7 +153,7 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
             <div className="text-center py-12">
               <div className="text-body text-text-primary mb-2">{job.current_step}</div>
               <div className="text-helper text-text-secondary">
-                正在搜索最新开源技术,评估方案中...
+                正在评估项目约束与方案风险,请稍候…
               </div>
               <div className="mt-4 w-48 mx-auto bg-slate-700/50 rounded-full h-2 overflow-hidden">
                 <div className="bg-gradient-to-r from-primary to-accent h-full animate-pulse" style={{ width: '60%' }} />
@@ -165,6 +171,24 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
               >
                 重新生成
               </button>
+            </div>
+          )}
+
+          {/* AI 推荐依据与关键假设 */}
+          {job?.status === 'success' && job.result && (
+            <div className="mb-4 rounded-card border border-primary/20 bg-primary/5 p-4">
+              <div className="text-[15px] font-medium text-text-primary mb-2">AI 推荐依据</div>
+              <p className="text-[13px] text-text-secondary leading-relaxed">
+                {job.result.recommendation_reason}
+              </p>
+              <div className="mt-3 pt-3 border-t border-primary/10">
+                <div className="text-[12px] font-medium text-text-secondary mb-1.5">关键假设</div>
+                <ul className="space-y-1 text-[12px] text-text-secondary">
+                  {job.result.key_assumptions.map((assumption) => (
+                    <li key={assumption}>• {assumption}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
 
@@ -194,6 +218,16 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
                         )}
                       </div>
                       <p className="text-helper text-text-secondary mt-1">{plan.tagline}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded">
+                          项目适配度 {plan.fit_score}/5
+                        </span>
+                        <span
+                          className={`text-[11px] border px-2 py-0.5 rounded ${RISK_META[plan.risk_level].className}`}
+                        >
+                          {RISK_META[plan.risk_level].label}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="text-helper text-text-secondary">预估工期</div>
@@ -207,13 +241,40 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
                     <span className="font-medium">适用场景:</span> {plan.suitable_for}
                   </p>
 
+                  <div className="bg-card-solid/30 border border-border rounded-lg p-3 mb-4">
+                    <div className="text-[12px] text-text-secondary mb-1">整体架构</div>
+                    <div className="text-[13px] text-text-primary leading-relaxed">
+                      {plan.architecture}
+                    </div>
+                  </div>
+
                   {/* 技术选型表格 */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                    <TechItem label="前端" tech={plan.frontend} />
-                    <TechItem label="后端" tech={plan.backend} />
-                    <TechItem label="数据库" tech={plan.database} />
-                    <TechItem label="部署" tech={plan.deployment} />
+                    <TechItem label="前端" items={Object.entries(plan.frontend)} />
+                    <TechItem label="后端" items={Object.entries(plan.backend)} />
+                    <TechItem label="数据库" items={Object.entries(plan.database)} />
+                    <TechItem label="部署" items={Object.entries(plan.deployment)} />
                   </div>
+
+                  {plan.third_party.length > 0 && (
+                    <div className="mb-4">
+                      <div className="text-[12px] text-text-secondary mb-2">第三方服务</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {plan.third_party.map((item) => (
+                          <div
+                            key={item.name}
+                            className="bg-card-solid/50 border border-border rounded-lg p-3 backdrop-blur-sm"
+                          >
+                            <div className="text-[11px] text-primary mb-1">{item.category}</div>
+                            <div className="text-[14px] font-medium text-text-primary">{item.name}</div>
+                            <p className="mt-1 text-[12px] text-text-secondary leading-relaxed">
+                              {item.reason}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* 优缺点 */}
                   <div className="grid grid-cols-2 gap-4 text-[13px]">
@@ -265,21 +326,53 @@ export function TechSelectionModal({ open, projectId, onClose, onConfirm }: Prop
   );
 }
 
-/** 单个技术选型项 */
-function TechItem({ label, tech }: { label: string; tech: { name: string; maturity: string; community_score: number } }) {
+/** 单个技术分类下的组件组合 */
+function TechItem({
+  label,
+  items,
+}: {
+  label: string;
+  items: [string, TechOption][];
+}) {
   const maturityLabel: Record<string, string> = {
     mature: '成熟',
     growing: '成长',
     emerging: '前沿',
   };
+  const componentLabel: Record<string, string> = {
+    framework: '框架',
+    language: '语言',
+    ui: 'UI',
+    state_management: '状态管理',
+    build_tool: '构建工具',
+    auth: '鉴权',
+    middleware: '中间件',
+    primary: '主数据库',
+    cache: '缓存',
+    search: '搜索',
+    container: '容器化',
+    ci_cd: 'CI/CD',
+    hosting: '托管',
+  };
+
   return (
     <div className="bg-card-solid/50 border border-border rounded-lg p-3 backdrop-blur-sm">
-      <div className="text-[12px] text-text-secondary mb-1">{label}</div>
-      <div className="text-[14px] font-medium text-text-primary">{tech.name}</div>
-      <div className="flex items-center gap-2 mt-1 text-[11px] text-text-secondary">
-        <span>{maturityLabel[tech.maturity] ?? tech.maturity}</span>
-        <span>·</span>
-        <span>⭐ {tech.community_score}/5</span>
+      <div className="text-[12px] text-text-secondary mb-2">{label}</div>
+      <div className="space-y-3">
+        {items.map(([key, tech]) => (
+          <div key={key}>
+            <div className="text-[11px] text-text-tertiary mb-0.5">
+              {componentLabel[key] ?? key}
+            </div>
+            <div className="text-[14px] font-medium text-text-primary">{tech.name}</div>
+            <p className="mt-1 text-[12px] text-text-secondary leading-relaxed">{tech.reason}</p>
+            <div className="flex items-center gap-2 mt-2 text-[11px] text-text-secondary">
+              <span>{maturityLabel[tech.maturity] ?? tech.maturity}</span>
+              <span>·</span>
+              <span>⭐ {tech.community_score}/5</span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

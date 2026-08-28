@@ -34,7 +34,6 @@ const QUICK_RESEARCH: InsightForgeUIAction = {
     const tools = (globalThis as unknown as { __dshTools__?: { invoke?: (name: string, args: unknown) => Promise<unknown> } }).__dshTools__;
     if (!tools?.invoke) {
       console.warn('[insightforge-client] __dshTools__.invoke 不可用,降级为 console 输出');
-      console.log(`[insightforge] 收到 idea: ${idea}`);
       return;
     }
     const result = await tools.invoke('market_research', { idea, depth: 'standard' });
@@ -72,8 +71,8 @@ const SEARCH_DEMAND: InsightForgeUIAction = {
       return;
     }
     const hits = (await tools.invoke('search_demand', { query: idea, limit: 10 })) as unknown[];
-    console.log(`[insightforge] 找到 ${hits.length} 条相关需求`);
-    for (const h of hits) console.log(h);
+    // 搜索结果 UI 化在 v1.1 迭代,当前仅调试窗口提示条数
+    console.warn(`[insightforge-client] search_demand 命中 ${hits.length} 条 (UI 尚未接入)`);
   },
 };
 

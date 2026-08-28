@@ -354,6 +354,8 @@ export function Report() {
   const [businessModel, setBusinessModel] = useState('');
   /** 历史文档归档(项目名 -> 已生成文档列表),用于左侧"已生成文档" */
   const [archives, setArchives] = useState<HistoryArchives>({});
+  /** 复制并重新调研 - 加载中状态(置于顶层 hooks 区,避免与其他 useEffect 交错导致顺序不一致) */
+  const [duplicating, setDuplicating] = useState(false);
 
   const {
     status,
@@ -409,8 +411,6 @@ export function Report() {
           window.clearInterval(docsTimerRef.current);
           docsTimerRef.current = null;
         }
-        // eslint-disable-next-line no-console
-        console.warn('docs poll failed:', err);
       }
     };
 
@@ -438,8 +438,6 @@ export function Report() {
           window.clearInterval(bpTimerRef.current);
           bpTimerRef.current = null;
         }
-        // eslint-disable-next-line no-console
-        console.warn('bp poll failed:', err);
       }
     };
 
@@ -680,7 +678,6 @@ export function Report() {
   };
 
   // 复制并重新调研 - 基于现有项目描述创建全新项目,保留原始报告
-  const [duplicating, setDuplicating] = useState(false);
   const handleDuplicate = async () => {
     if (!project || duplicating) return;
     setDuplicating(true);
@@ -1721,9 +1718,9 @@ export function Report() {
         }}
       />
 
-      {/* 版本选择 + 选型引导弹窗 */}
+      {/* 版本选择 + 选型引导弹窗(层级低于子弹窗 TechSelectionModal/FrontendDesignModal,确保选中弹窗始终在最前) */}
       {showVersionSelect && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 no-print p-4">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 no-print p-4">
           <div className="bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card w-full max-w-2xl max-h-[85vh] flex flex-col shadow-glass">
             <div className="p-6 border-b border-border">
               <h2 className="text-section text-text-primary">生成开发文档</h2>

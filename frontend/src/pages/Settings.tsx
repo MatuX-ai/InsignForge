@@ -2,6 +2,9 @@
  * 设置页 - 按前端设计文档 §3.4
  * LLM Provider 配置 + 搜索引擎配置
  *
+ * Provider 下拉选项与默认模型均使用前端 lib/llmProviders.ts 的注册表驱动,
+ * 在该注册表中添加国产大模型即可在此页自动露出。
+ *
  * 注意:API Key 保存后会同步写入后端内存与 .env 文件,无需重启服务。
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -10,7 +13,12 @@ import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { api } from '../lib/api';
-import type { AppSettings, LlmStatus } from '../types';
+import {
+  LLM_PROVIDERS,
+  defaultModelFor,
+  getLlmProvider,
+} from '../lib/llmProviders';
+import type { AppSettings, LlmProvider, LlmStatus } from '../types';
 
 const DEFAULT: AppSettings = {
   llmProvider: 'deepseek',
@@ -168,18 +176,35 @@ export function Settings() {
             </label>
             <select
               value={settings.llmProvider}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextProvider = e.target.value as LlmProvider;
+                // 切换 Provider 时:若 model 仍为上一个 provider 的默认值,
+                // 自动切换到新 provider 的默认 model,避免出现"provider=glm, model=deepseek-chat"这种不一致状态
+                const currentProviderMeta = getLlmProvider(settings.llmProvider);
+                const isCurrentModelStillDefault =
+                  currentProviderMeta?.suggestedModels.includes(settings.llmModel) ?? false;
+                const newModel =
+                  isCurrentModelStillDefault || !settings.llmModel
+                    ? defaultModelFor(nextProvider)
+                    : settings.llmModel;
                 setSettings({
                   ...settings,
-                  llmProvider: e.target.value as AppSettings['llmProvider'],
-                })
-              }
+                  llmProvider: nextProvider,
+                  llmModel: newModel,
+                });
+              }}
               className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
             >
-              <option value="deepseek">DeepSeek</option>
-              <option value="openai">OpenAI</option>
-              <option value="ollama">Ollama (本地)</option>
+              {LLM_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                  {p.brand ? ` · ${p.brand}` : ''}
+                  {!p.requiresKey ? ' · 本地无需 Key' : ''}
+                </option>
+              ))}
             </select>
+            {/* 当前 provider 的一句话简介 + 提供 Key 申请连接 */}
+            <ProviderHint provider={settings.llmProvider} />
           </div>
 
           <div>
@@ -188,24 +213,52 @@ export function Settings() {
             </label>
             <input
               type="text"
+              list="llm-suggested-models"
               value={settings.llmModel}
               onChange={(e) =>
                 setSettings({ ...settings, llmModel: e.target.value })
               }
+              placeholder="例如 deepseek-chat"
               className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
             />
+            {/* 当前 provider 的推荐模型 datalist,支持 input 自动补全 */}
+            <datalist id="llm-suggested-models">
+              {(getLlmProvider(settings.llmProvider)?.suggestedModels ?? []).map(
+                (m) => (
+                  <option key={m} value={m} />
+                )
+              )}
+            </datalist>
+            <div className="text-helper text-text-secondary mt-1">
+              可从下拉直接选取推荐模型,也可手动输入自定义模型名
+            </div>
           </div>
 
           <div>
             <label className="text-helper text-text-secondary block mb-1">
               API Key
+              {getLlmProvider(settings.llmProvider)?.keyUrl && (
+                <a
+                  href={getLlmProvider(settings.llmProvider)!.keyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  去获取 →
+                </a>
+              )}
             </label>
             <div className="flex gap-2">
               <input
                 type={settings.showApiKey ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
+                placeholder={
+                  getLlmProvider(settings.llmProvider)?.requiresKey
+                    ? 'sk-...'
+                    : '本地 Ollama 无需 Key'
+                }
                 className="flex-1 h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
               />
               <button
@@ -227,20 +280,30 @@ export function Settings() {
             <span className="text-helper text-text-secondary">状态:</span>
             {loadingStatus ? (
               <span className="text-helper text-text-secondary">检测中...</span>
-            ) : llmStatus?.provider === 'ollama' ? (
-              <span className="text-success text-helper">
-                ✅ 本地 Ollama,无需 Key
-              </span>
-            ) : llmStatus?.hasApiKey ? (
-              <span className="text-success text-helper">
-                ✅ 已配置
-                {llmStatus.runtimeOverride && '(本次会话已更新)'}
-              </span>
-            ) : (
-              <span className="text-warning text-helper">
-                ⚠ 未配置,无法调用 LLM
-              </span>
-            )}
+            ) : (() => {
+              const meta = llmStatus ? getLlmProvider(llmStatus.provider) : null;
+              const noKeyNeeded = meta ? !meta.requiresKey : false;
+              if (noKeyNeeded) {
+                return (
+                  <span className="text-success text-helper">
+                    ✅ 本地 Ollama,无需 Key
+                  </span>
+                );
+              }
+              if (llmStatus?.hasApiKey) {
+                return (
+                  <span className="text-success text-helper">
+                    ✅ 已配置
+                    {llmStatus.runtimeOverride && '(本次会话已更新)'}
+                  </span>
+                );
+              }
+              return (
+                <span className="text-warning text-helper">
+                  ⚠ 未配置,无法调用 LLM
+                </span>
+              );
+            })()}
           </div>
 
           {!loadingStatus && llmStatus && (
@@ -254,7 +317,9 @@ export function Settings() {
                   <span className="text-helper text-text-secondary shrink-0">
                     Provider
                   </span>
-                  <span className="text-body text-text-primary">{llmStatus.provider}</span>
+                  <span className="text-body text-text-primary">
+                    {getLlmProvider(llmStatus.provider)?.label ?? llmStatus.provider}
+                  </span>
                 </div>
                 <div className="flex justify-between gap-4">
                   <span className="text-helper text-text-secondary shrink-0">
@@ -275,33 +340,33 @@ export function Settings() {
                     API Key
                   </span>
                   <span className="text-body text-text-primary">
-                    {llmStatus.provider === 'ollama'
-                      ? '本地 Ollama,无需 Key'
-                      : llmStatus.hasApiKey
-                        ? llmStatus.apiKeyMask
-                        : '未配置'}
+                    {(() => {
+                      const meta = getLlmProvider(llmStatus.provider);
+                      if (meta && !meta.requiresKey) {
+                        return '本地无需 Key';
+                      }
+                      if (llmStatus.hasApiKey) return llmStatus.apiKeyMask;
+                      return '未配置';
+                    })()}
                   </span>
                 </div>
               </div>
 
-              {/* 各 Provider 配置状态 */}
+              {/* 各 Provider 配置状态(由前端 LLM_PROVIDERS 注册表驱动) */}
               <div className="rounded-lg border border-border bg-card-solid/40 p-4 space-y-1.5">
                 <div className="text-helper text-text-secondary font-medium mb-2">
                   Provider 配置状态
                 </div>
-                {(
-                  [
-                    { id: 'deepseek', label: 'DeepSeek' },
-                    { id: 'openai', label: 'OpenAI' },
-                    { id: 'ollama', label: 'Ollama (本地)' },
-                  ] as const
-                ).map((p) => (
+                {LLM_PROVIDERS.map((p) => (
                   <div key={p.id} className="flex justify-between gap-4">
                     <span className="text-helper text-text-secondary">
                       {p.label}
+                      {p.brand ? (
+                        <span className="ml-1 text-text-tertiary">· {p.brand}</span>
+                      ) : null}
                     </span>
                     <span className="text-helper">
-                      {p.id === 'ollama' ? (
+                      {!p.requiresKey ? (
                         <span className="text-text-secondary">本地无需 Key</span>
                       ) : llmStatus.providerKeyMap[p.id] ? (
                         <span className="text-success">✅ 已配置</span>
@@ -427,5 +492,32 @@ export function Settings() {
         文件,后续 LLM 调用将立即使用新 Key,无需重启服务。
       </div>
     </main>
+  );
+}
+
+/**
+ * Provider 下拉下面的 一句话描述 + 申请 Key 提示
+ * 依赖 LLM_PROVIDERS 注册表;provider 未知时静默不渲染
+ */
+function ProviderHint({ provider }: { provider: LlmProvider }) {
+  const meta = getLlmProvider(provider);
+  if (!meta) return null;
+  return (
+    <div className="text-helper text-text-secondary mt-1">
+      {meta.description}
+      {meta.keyUrl && (
+        <>
+          {' · '}
+          <a
+            href={meta.keyUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            申请 API Key →
+          </a>
+        </>
+      )}
+    </div>
   );
 }
