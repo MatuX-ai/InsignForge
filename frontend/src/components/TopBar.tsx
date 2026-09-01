@@ -2,23 +2,32 @@
  * 顶部导航 - 深色玻璃拟态主题
  * 桌面端:横排 nav
  * 移动端:右上角汉堡按钮,展开下拉菜单
+ *
+ * v2.0: 右侧加入用户登录入口
+ *   - 未登录: 显示「登录」按钮(仅当 authEnabled)
+ *   - 已登录: 头像 + 名字 + 下拉菜单(注销 / 配额信息)
  */
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 
-const tabs: Array<{ path: string; label: string }> = [
+const tabs: Array<{ path: string; label: string; icon?: string }> = [
   { path: '/', label: '首页' },
   { path: '/discuss', label: '梳理' },
   { path: '/history', label: '历史' },
   { path: '/settings', label: '设置' },
+  { path: '/monitor', label: '监控', icon: '🩺' },
 ];
 
 export function TopBar() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const { user, authEnabled, login, logout } = useCurrentUser();
 
-  // 点击外部 / Esc 关闭
+  // 点击外部 / Esc 关闭主菜单
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
@@ -37,9 +46,25 @@ export function TopBar() {
     };
   }, [open]);
 
+  // 用户菜单点击外部关闭
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target as Node)
+      ) {
+        setUserMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, [userMenuOpen]);
+
   // 路由切换自动关闭菜单
   useEffect(() => {
     setOpen(false);
+    setUserMenuOpen(false);
   }, [location.pathname]);
 
   return (
@@ -59,13 +84,14 @@ export function TopBar() {
             <Link
               key={tab.path}
               to={tab.path}
-              className={`text-body transition-all duration-200 relative ${
+              className={`text-body transition-all duration-200 relative flex items-center gap-1 ${
                 active
                   ? 'text-primary-light font-medium'
                   : 'text-text-secondary hover:text-text-primary'
               }`}
             >
-              {tab.label}
+              {tab.icon && <span aria-hidden>{tab.icon}</span>}
+              <span>{tab.label}</span>
               {active && (
                 <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-primary to-accent rounded-full" />
               )}
@@ -74,11 +100,87 @@ export function TopBar() {
         })}
       </nav>
 
-      {/* 右侧:版本号(桌面) + 汉堡(移动) */}
+      {/* 右侧:版本号(桌面) + 用户菜单 + 汉堡(移动) */}
       <div className="ml-auto flex items-center gap-3">
         <div className="hidden md:block text-helper text-text-tertiary">
-          v1.0 · 个人版
+          v1.6 · 个人版
         </div>
+
+        {/* v2.0: 用户登录入口(鉴权开启时显示) */}
+        {authEnabled && (
+          <div ref={userMenuRef} className="relative">
+            {user ? (
+              <>
+                <button
+                  type="button"
+                  aria-label="用户菜单"
+                  aria-expanded={userMenuOpen}
+                  onClick={() => setUserMenuOpen((v) => !v)}
+                  className="flex items-center gap-2 h-9 px-2 rounded-lg hover:bg-hover-bg border border-border transition-colors"
+                >
+                  {user.avatar_url ? (
+                    <img
+                      src={user.avatar_url}
+                      alt={user.name}
+                      className="w-6 h-6 rounded-full object-cover"
+                    />
+                  ) : (
+                    <span className="w-6 h-6 rounded-full bg-primary/30 text-primary-light text-helper flex items-center justify-center">
+                      {user.name.slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="text-helper text-text-primary hidden sm:inline">
+                    {user.name}
+                  </span>
+                </button>
+                {userMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-2 w-56 bg-card-solid/95 backdrop-blur-2xl border border-border rounded-lg shadow-glass z-30 overflow-hidden"
+                  >
+                    <div className="px-4 py-3 border-b border-border">
+                      <div className="text-body text-text-primary truncate">
+                        {user.name}
+                      </div>
+                      <div className="text-helper text-text-secondary truncate">
+                        {user.email}
+                      </div>
+                      <div className="mt-2 text-helper text-text-secondary">
+                        计划:{' '}
+                        <span className="text-primary-light font-medium">
+                          {user.plan_type}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-helper text-text-secondary">
+                        今日剩余:{' '}
+                        <span className="text-primary-light font-medium">
+                          {user.quota.remaining}
+                        </span>{' '}
+                        / {user.quota.limit}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => void logout()}
+                      className="block w-full text-left px-4 py-3 text-body text-text-primary hover:bg-hover-bg transition-colors"
+                    >
+                      注销
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={login}
+                className="h-9 px-3 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary-light text-helper border border-primary/30 transition-colors"
+              >
+                登录
+              </button>
+            )}
+          </div>
+        )}
 
         {/* 移动端汉堡按钮 */}
         <div ref={menuRef} className="md:hidden relative">
@@ -115,7 +217,7 @@ export function TopBar() {
                 );
               })}
               <div className="px-4 py-2 text-helper text-text-tertiary border-t border-border">
-                v1.0 · 个人版
+                v1.6 · 个人版
               </div>
             </div>
           )}

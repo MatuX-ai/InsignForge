@@ -5,8 +5,19 @@
  * 失败时优雅降级(返回空数组,不抛出),由上层冷启动示例数据兜底。
  *
  * 文档: https://serpapi.com/search-api
+ *
+ * 健壮性:
+ *   - reliability.withReliability: 重试 + 熔断 + 缓存 + 指标
+ *   - 同一 engine+keyword 5min TTL 缓存
+ *   - 鉴权失败(401/403)直接失败不重试
  */
 import { logger } from '../../logger.js';
+import {
+  SourceError,
+  fetchWithRetry,
+  hashKey,
+  withReliability,
+} from './reliability.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 interface SerpApiOrganicResult {
@@ -20,6 +31,8 @@ interface SerpApiResponse {
   error?: string;
 }
 
+const RELIABILITY_SOURCE = 'serpapi';
+
 /** 单次搜索调用 */
 export async function searchSerpApi(
   keyword: string,
@@ -31,39 +44,47 @@ export async function searchSerpApi(
     logger.warn({ keyword }, 'SerpAPI 未配置 Key,跳过');
     return [];
   }
+  const cacheKey = `${RELIABILITY_SOURCE}:${hashKey(`${keyword}|${source}`)}`;
 
-  try {
-    const url = `https://serpapi.com/search.json?engine=${source}&q=${encodeURIComponent(keyword)}&num=20&api_key=${encodeURIComponent(apiKey)}`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      logger.warn({ status: res.status, keyword }, 'SerpAPI 返回非 200');
-      return [];
+  return withReliability(
+    { source: RELIABILITY_SOURCE, cacheKey },
+    async () => {
+      const url = `https://serpapi.com/search.json?engine=${source}&q=${encodeURIComponent(keyword)}&num=20&api_key=${encodeURIComponent(apiKey)}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 25_000);
+      try {
+        const res = await fetchWithRetry(
+          url,
+          { signal: controller.signal },
+          { maxRetries: 2, baseDelayMs: 1_000, maxDelayMs: 5_000 }
+        );
+        const data = (await res.json()) as SerpApiResponse;
+        if (data.error) {
+          logger.warn({ error: data.error, keyword }, 'SerpAPI 返回错误');
+          return [];
+        }
+        const results = data.organic_results ?? [];
+        return results
+          .filter((r) => r.link)
+          .map((r) => ({
+            content: r.snippet ?? '',
+            title: r.title ?? keyword,
+            url: r.link!,
+            source,
+            engagement: 0,
+          }));
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err), keyword },
+          'SerpAPI 调用失败,跳过'
+        );
+        return [];
+      } finally {
+        clearTimeout(timer);
+      }
     }
-
-    const data = (await res.json()) as SerpApiResponse;
-    if (data.error) {
-      logger.warn({ error: data.error, keyword }, 'SerpAPI 返回错误');
-      return [];
-    }
-
-    const results = data.organic_results ?? [];
-    return results
-      .filter((r) => r.link)
-      .map((r) => ({
-        content: r.snippet ?? '',
-        title: r.title ?? keyword,
-        url: r.link!,
-        source,
-        engagement: 0,
-      }));
-  } catch (err) {
-    logger.warn({ err, keyword }, 'SerpAPI 调用失败,跳过');
+  ).catch((err): Pick<MarketNeed, 'content' | 'title' | 'url' | 'source' | 'engagement'>[] => {
+    if (err instanceof SourceError) return [];
     return [];
-  }
+  });
 }

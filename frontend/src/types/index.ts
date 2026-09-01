@@ -49,6 +49,20 @@ export interface ReportSource {
   source?: string;
 }
 
+/** v1.6: 数据源贡献度(后端 MarketResearcher 聚合写入) */
+export interface ReportContribution {
+  /** 来源原始标识,如 reddit / hackernews / google */
+  source: string;
+  /** 粗粒度分类,便于前端分组 */
+  type: 'forum' | 'search' | 'social' | 'review';
+  /** 本次调研中该 source 实际落库的条数 */
+  count: number;
+  /** 该 source 的默认权重 */
+  weight: number;
+  /** 0~100,加权后占比,前端可直接渲染 */
+  percentage: number;
+}
+
 /** 报告中的竞品 */
 export interface ReportCompetitor {
   name: string;
@@ -76,6 +90,8 @@ export interface MarketReport {
   risks: string[];
   opportunities: string[];
   sources: ReportSource[];
+  /** v1.6: 数据源贡献度,MarketResearcher 聚合写入;老报告无此字段时为空数组 */
+  contributions?: ReportContribution[];
   generated_at: string;
 }
 
@@ -96,7 +112,25 @@ export interface ResearchStatus {
 }
 
 /** 业务错误码(与后端 backend/src/types/index.ts 保持一致) */
-export type ErrorCode = 'MISSING_API_KEY' | 'INTERNAL_ERROR';
+/**
+ * 错误码分类:
+ *   - MISSING_API_KEY        LLM 鉴权缺失(引导用户去设置)
+ *   - INTERNAL_ERROR         兜底未知错误
+ *   - SOURCE_*               多源采集引擎 v1.3 新增的细分(对应后端 SourceError.kind)
+ */
+export type ErrorCode =
+  | 'MISSING_API_KEY'
+  | 'INTERNAL_ERROR'
+  | 'SOURCE_NETWORK'
+  | 'SOURCE_TIMEOUT'
+  | 'SOURCE_RATE_LIMIT'
+  | 'SOURCE_SERVER_5XX'
+  | 'SOURCE_BAD_GATEWAY'
+  | 'SOURCE_UNKNOWN_HTTP'
+  | 'SOURCE_CLIENT_4XX'
+  | 'SOURCE_PARSE'
+  | 'SOURCE_CIRCUIT_OPEN'
+  | 'SOURCE_VALIDATION';
 
 /** LLM 配置状态(后端 /api/v1/settings/llm 返回) */
 /**
@@ -309,7 +343,11 @@ export interface BpJob {
   error_code: ErrorCode | null;
   error_message: string | null;
   filenames: string[];
-  /** 自动归档到"历史文档"目录后的绝对路径(供前端提示) */
+  /**
+   * 自动归档目录的绝对路径:指向 12 份 md 所在的文件夹。
+   * 桌面端通过此路径调用 shell.openPath 预览首份,或 IPC 复制到用户选定位置(另存)。
+   * 未归档时为 null。
+   */
   archive_path: string | null;
 }
 
@@ -339,6 +377,87 @@ export interface HistoryArchiveEntry {
 /** 历史文档归档结构: 项目名 -> 归档条目 */
 export type HistoryArchives = Record<string, HistoryArchiveEntry>;
 
+/** v1.6: 系统级健康检查响应(后端 GET /api/v1/health/system 返回) */
+export interface SystemHealthDb {
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+}
+export interface SystemHealthLlm {
+  provider: string;
+  model: string;
+  configured: boolean;
+}
+export interface SystemHealthCache {
+  enabled: boolean;
+  total: number;
+  active: number;
+  expired: number;
+}
+export interface SystemHealthScheduler {
+  running: boolean;
+  intervalMs: number;
+  firstDelayMs: number;
+  lastRunAt: string | null;
+  lastDurationMs: number | null;
+  lastRemoved: number | null;
+  nextRunAt: string | null;
+}
+export interface SystemHealthResponse {
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  checkedAt: string;
+  uptime: number;
+  db: SystemHealthDb;
+  llm: SystemHealthLlm;
+  cache: SystemHealthCache;
+  scheduler: SystemHealthScheduler;
+  issues: string[];
+}
+
+/** v1.6: 单个调度任务状态(后端 GET /api/v1/admin/scheduler/status 返回) */
+export interface SchedulerJobStatus {
+  name: string;
+  running: boolean;
+  intervalMs: number;
+  firstDelayMs: number;
+  lastRunAt: string | null;
+  lastDurationMs: number | null;
+  lastRemoved: number | null;
+  lastError: string | null;
+  nextRunAt: string | null;
+}
+
+/** v1.6: 全部调度任务状态响应 */
+export interface SchedulerStatusResponse {
+  schedulers: SchedulerJobStatus[];
+  snapshotAt: string;
+}
+
+/** v2.0: 当前用户的配额信息(后端 GET /api/v1/auth/me 返回) */
+export interface UserQuota {
+  planType: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  resetAt: string;
+}
+
+/** v2.0: 当前登录用户的公开字段 */
+export interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+  plan_type: string;
+  quota: UserQuota;
+}
+
+/** v2.0: GET /api/v1/auth/me 返回 */
+export interface AuthMeResponse {
+  user: CurrentUser | null;
+  authEnabled: boolean;
+}
+
 /** 桌面端 preload 暴露的桥接能力(浏览器中为 undefined) */
 declare global {
   interface Window {
@@ -348,6 +467,16 @@ declare global {
       isDesktop: boolean;
       /** 用系统默认程序打开指定路径文件 */
       openPath: (p: string) => Promise<{ ok: boolean; message?: string }>;
+      /**
+       * 弹目录选择对话框,把 sourceDir 整个目录复制到用户选定位置。
+       * 仅桌面端可用;浏览器中调用会 reject。
+       */
+      saveDir: (args: { sourceDir: string; defaultName: string }) => Promise<{
+        ok: boolean;
+        canceled?: boolean;
+        targetDir?: string;
+        message?: string;
+      }>;
     };
   }
 }

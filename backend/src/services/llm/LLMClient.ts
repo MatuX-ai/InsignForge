@@ -21,8 +21,15 @@ import { getLlmProvider } from './providers.js';
 import { buildSchemaPromptSection } from './schemaPrompt.js';
 import {
   recordRetryResult,
+  recordCacheResultMetric,
 } from './retryMetrics.js';
 import { formatRetryFeedback } from './retryUtils.js';
+import {
+  type CacheMeta,
+  getCachedOutput,
+  setCachedOutput,
+  makeCacheKey,
+} from './cache.js';
 
 /**
  * 缺少 LLM API Key 时抛出的专用错误
@@ -125,6 +132,11 @@ export interface ChatOptions {
   maxTokens?: number;
   /** 超时(秒),默认 60 */
   timeoutSec?: number;
+  /**
+   * v1.5 缓存元信息: 传入后会先查 SQLite 缓存表;命中直接返回;未命中则在调用成功后写盘
+   * 不传则完全不走缓存路径(避免误缓存讨论流等场景)
+   */
+  cacheMeta?: CacheMeta;
 }
 
 /**
@@ -174,12 +186,30 @@ export async function chatComplete(
 /**
  * JSON 模式对话 - 自动解析返回的 JSON
  * 失败时抛出错误,不返回 null
+ *
+ * v1.5 缓存: 传入 options.cacheMeta 时先查 SQLite;命中直接返回;未命中调用成功落盘
  */
 export async function chatJson<T>(
   systemPrompt: string,
   userPrompt: string,
   options: Omit<ChatOptions, 'jsonMode'> = {}
 ): Promise<T> {
+  // v1.5 cache lookup
+  if (options.cacheMeta) {
+    const cacheKey = makeCacheKey(
+      options.cacheMeta.schemaName,
+      systemPrompt,
+      userPrompt,
+      options
+    );
+    const cached = getCachedOutput(cacheKey);
+    if (cached !== null) {
+      recordCacheResult(options.cacheMeta.schemaName, 'hit');
+      return parseJsonContent(cached) as T;
+    }
+    recordCacheResult(options.cacheMeta.schemaName, 'miss');
+  }
+
   const content = await chatComplete(
     [
       { role: 'system', content: systemPrompt },
@@ -188,21 +218,41 @@ export async function chatJson<T>(
     { ...options, jsonMode: true }
   );
 
-  // 容错:有些模型返回时包裹 ```json ... ```
+  // v1.5 cache write-back
+  if (options.cacheMeta) {
+    const cacheKey = makeCacheKey(
+      options.cacheMeta.schemaName,
+      systemPrompt,
+      userPrompt,
+      options
+    );
+    setCachedOutput(cacheKey, options.cacheMeta.schemaName, content, {
+      inputSize: systemPrompt.length + userPrompt.length,
+    });
+  }
+
+  return parseJsonContent(content) as T;
+}
+
+function parseJsonContent(content: string): unknown {
   const cleaned = content
     .trim()
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')
     .replace(/```\s*$/i, '');
-
   try {
-    return JSON.parse(cleaned) as T;
+    return JSON.parse(cleaned);
   } catch (err) {
-    logger.error({ content: cleaned.slice(0, 500) }, 'JSON 解析失败');
+    logger.error({ content: cleaned.slice(0, 500) }, 'JSON parse failed');
     throw new Error(
-      `LLM 返回的 JSON 格式无效:${err instanceof Error ? err.message : String(err)}`
+      `LLM returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`
     );
   }
+}
+
+function recordCacheResult(schemaName: string, kind: 'hit' | 'miss'): void {
+  recordCacheResultMetric(schemaName, kind);
+  logger.debug({ schemaName, kind }, 'LLM cache result');
 }
 
 /**

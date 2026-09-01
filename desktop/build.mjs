@@ -36,12 +36,30 @@ function run(cmd, cwd) {
 }
 
 // ---------- 递增版本号 (仅 --dist 模式) ----------
+// 版本号规则: major.minor.PATCH
+//   - PATCH 为两位数(00~99),每次 --dist 打包 +1
+//   - 当 PATCH 越过 99 时回零,minor +1,尾数补零保持两位
+//   - 起始版本 0.1.00
 if (process.argv.includes('--dist')) {
   step('0/6 递增版本号');
   const pkgPath = path.join(DESKTOP, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-  const [major, minor, patch] = pkg.version.split('.').map(Number);
-  const newVersion = `${major}.${minor}.${patch + 1}`;
+
+  const [maj, min, pat] = String(pkg.version).split('.').map((s) => Number.parseInt(s, 10));
+  // 容错: 任意一段不是合法数字,统一回退到 0.1.00
+  const isValid = [maj, min, pat].every(Number.isFinite);
+  const major = isValid ? maj : 0;
+  const minor = isValid ? min : 1;
+  const patch = isValid ? pat : 0;
+
+  let nextPatch = patch + 1;
+  let nextMinor = minor;
+  if (nextPatch > 99) {
+    nextPatch = 0;
+    nextMinor += 1;
+  }
+
+  const newVersion = `${major}.${nextMinor}.${String(nextPatch).padStart(2, '0')}`;
   console.log(`  ${pkg.version} → ${newVersion}`);
   pkg.version = newVersion;
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
@@ -155,51 +173,116 @@ if (process.argv.includes('--dist')) {
   run(`${NPM} exec -- electron-builder --dir`, DESKTOP);
 }
 
-// ---------- 嵌入图标到 InsightForge.exe ----------
-// electron-builder 自带的 png2icons 可能只生成单尺寸 ICO,导致 RT_GROUP_ICON 仍指向旧条目.
-// 这里手动生成多尺寸 ICO(16/24/32/48/64/128/256)并用 rcedit-x64.exe 嵌入,
-// 确保 win-unpacked/InsightForge.exe 始终带新图标。
-step('6/7 嵌入应用图标');
+// ---------- 嵌入应用图标到 win-unpacked ----------
+// ⚠️ signAndEditExecutable:false 让 electron-builder 跳过 rcedit, 我们手动补一刀.
+//
+// 但是只 rcedit **win-unpacked/InsightForge.exe**, 不能 rcedit NSIS / portable:
+//   - NSIS 安装器 / portable 启动器都是 NSIS 框架生成的 PE, 自带 .ndata / 追加 payload
+//   - rcedit v0.2.0 修改 PE 头后会剥离 NSIS 的追加数据, 把 101MB 安装器砍到 100KB 空壳
+//   - electron-builder 的 winCodeSign 也用同样的 rcedit, 同样会破坏 NSIS
+//
+// 所以三产物的图标处理分两条路:
+//   1. win-unpacked/InsightForge.exe → rcedit 嵌入 PE 图标 (启动后窗口/任务栏看到)
+//   2. NSIS / portable                → 不动 PE; 靠 electron-builder.yml 的
+//      `nsis.installerIcon` / `nsis.uninstallerIcon` 把 icon.ico 嵌进 MUI 对话框资源
+//      (用户安装时看到的"安装对话框图标 / 卸载图标 / 开始菜单快捷方式图标" 都是这里)
+//
+// 关键: 这步必须在 electron-builder (上一步) **之后** 执行,
+//       否则 electron-builder 会用上次嵌入的旧图标覆盖.
+step('6/7 嵌入应用图标 (仅 win-unpacked)');
 const { spawnSync } = await import('node:child_process');
 
 function fail(msg) { console.error(`\n❌ ${msg}`); process.exit(1); }
 
-// 6.1 生成多尺寸 ICO
+// 6.1 生成多尺寸 ICO — 同时输出两份:
+//   build/icon.ico       — 供 electron-builder.yml 的 win.icon / nsis.installerIcon 用
+//   dist/.icon-ico/icon.ico — multi-size, electron-builder 读取它 (PNG-encoded 现代格式)
 const psScript = path.join(DESKTOP, 'scripts', 'make-multi-ico.ps1');
-const icoOut = path.join(DESKTOP, 'dist', '.icon-ico', 'icon.ico');
-console.log(`  生成多尺寸 ICO: ${icoOut}`);
+const icoOutDist = path.join(DESKTOP, 'dist', '.icon-ico', 'icon.ico');
+const icoOutBuild = path.join(DESKTOP, 'build', 'icon.ico');
+console.log(`  生成多尺寸 ICO: ${icoOutDist}`);
 const psRun = spawnSync('powershell.exe',
   ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript,
    '-PngPath', path.join(DESKTOP, 'build', 'icon.png'),
-   '-Output', icoOut],
+   '-Output', icoOutDist],
   { stdio: 'inherit' });
 if (psRun.status !== 0) fail('make-multi-ico.ps1 失败');
+fs.mkdirSync(path.dirname(icoOutBuild), { recursive: true });
+fs.copyFileSync(icoOutDist, icoOutBuild);
 
-// 6.2 rcedit 嵌入图标到 EXE
-const rcedit = path.join(process.env.LOCALAPPDATA || process.env.HOME,
-  'electron-builder', 'Cache', 'winCodeSign', '583233367', 'rcedit-x64.exe');
-const exePath = path.join(DESKTOP, 'dist', 'win-unpacked', 'InsightForge.exe');
+// 6.1.5 生成单尺寸 256x256 ICO — 专门喂给 rcedit
+// ⚠️ rcedit v0.2.0 处理 multi-size PNG-encoded ICO 有 bug: 不会改主图标, 仍保留旧 Electron logo.
+// 改用单尺寸 256x256 PNG ICO 后, Windows 资源提取器 (ExtractAssociatedIcon) 能正确拿到新图标.
+// electron-builder 仍然吃 multi-size ICO (它的 winCodeSign 会正确处理).
+const icoOutSingle = path.join(DESKTOP, 'dist', '.icon-ico', 'icon-256.ico');
+const psSingle = path.join(DESKTOP, 'scripts', 'make-single-ico.ps1');
+console.log(`  生成单尺寸 256x256 ICO (喂给 rcedit): ${icoOutSingle}`);
+const psSingleRun = spawnSync('powershell.exe',
+  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psSingle,
+   '-PngPath', path.join(DESKTOP, 'build', 'icon.png'),
+   '-Output', icoOutSingle,
+   '-Size', '256'],
+  { stdio: 'inherit' });
+if (psSingleRun.status !== 0) fail('make-single-ico.ps1 失败');
 
-if (!fs.existsSync(rcedit)) {
-  console.warn(`  ⚠️ 找不到 rcedit-x64.exe (${rcedit}),跳过嵌入步骤`);
-  console.warn('     请运行 desktop/scripts/fetch-wincodesign.mjs 下载并解压');
-} else if (!fs.existsSync(exePath)) {
-  console.warn(`  ⚠️ 找不到 ${exePath},跳过嵌入步骤`);
-} else {
-  console.log(`  嵌入 ${path.basename(exePath)}`);
-  const before = fs.statSync(exePath).size;
-  const r = spawnSync(rcedit, [exePath, '--set-icon', icoOut], { stdio: 'inherit' });
-  if (r.status !== 0) fail('rcedit 嵌入图标失败');
-  const after = fs.statSync(exePath).size;
-  console.log(`  ✅ 完成 (大小: ${before} → ${after})`);
+// 6.2 rcedit — 自适应探测缓存目录, 不再硬编码 winCodeSign hash
+function resolveRcedit() {
+  // 项目内 vendored 优先级最高
+  const vendored = path.join(DESKTOP, 'resources', 'tools', 'rcedit-x64.exe');
+  if (fs.existsSync(vendored)) return vendored;
+  // electron-builder 缓存目录: glob 任意版本子目录
+  const cacheRoot = path.join(
+    process.env.LOCALAPPDATA || process.env.HOME || '',
+    'electron-builder', 'Cache', 'winCodeSign'
+  );
+  if (fs.existsSync(cacheRoot)) {
+    const found = fs.readdirSync(cacheRoot)
+      .map((d) => path.join(cacheRoot, d, 'rcedit-x64.exe'))
+      .filter((p) => fs.existsSync(p))
+      .sort();
+    if (found.length) return found[found.length - 1];
+  }
+  return null;
 }
 
-// ---------- 清理多余图标资源 ----------
+const rcedit = resolveRcedit();
+if (!rcedit) {
+  console.warn('  ⚠️ 找不到 rcedit-x64.exe, 跳过 win-unpacked 图标嵌入');
+  console.warn('     从 https://github.com/electron/rcedit/releases 下载并放到');
+  console.warn('     desktop/resources/tools/rcedit-x64.exe 后重新构建');
+} else {
+  // 只 rcedit win-unpacked/InsightForge.exe. NSIS / portable 由 electron-builder
+  // 通过 nsis.installerIcon/nsis.uninstallerIcon 配置嵌入 MUI 图标 (不动 PE).
+  const targets = [path.join(DESKTOP, 'dist', 'win-unpacked', 'InsightForge.exe')]
+    .filter((p) => fs.existsSync(p));
+  if (targets.length === 0) {
+    console.warn('  ⚠️ win-unpacked/InsightForge.exe 不存在, 跳过嵌入步骤');
+  } else {
+    for (const exePath of targets) {
+      console.log(`  嵌入 ${path.basename(exePath)}`);
+      const before = fs.statSync(exePath).size;
+      const r = spawnSync(rcedit, [exePath, '--set-icon', icoOutSingle], { stdio: 'inherit' });
+      if (r.status !== 0) fail(`rcedit 嵌入 ${exePath} 失败`);
+      const after = fs.statSync(exePath).size;
+      console.log(`    大小: ${before} → ${after} (Δ ${after - before})`);
+    }
+    console.log(`  ✅ 已嵌入 win-unpacked 图标 (NSIS / portable 跳过, 避免 rcedit 损坏安装器)`);
+  }
+}
+
+// ---------- 收尾 ----------
 step('7/7 收尾');
-// win-unpacked 里的 chrome_100_percent.pak / resources 等 Electron 资源保持原样
+// 校验安装包内 backend 资源齐全 (signAndEditExecutable:false 可能影响 extraResources)
+const unpackedResources = path.join(DESKTOP, 'dist', 'win-unpacked', 'resources');
+if (!fs.existsSync(unpackedResources) || !fs.existsSync(path.join(unpackedResources, 'backend'))) {
+  console.warn(`  ⚠️ ${unpackedResources}/backend 缺失, 请检查 electron-builder.yml extraResources.filter`);
+} else {
+  console.log('  ✅ win-unpacked/resources/backend 已就绪');
+}
 
 console.log('\n✅ 完成');
 console.log(`  backend:   ${backendRes}`);
+console.log(`  icon.ico:  ${icoOutDist} → ${icoOutBuild}`);
 if (process.argv.includes('--dist')) {
   console.log(`  安装包:    ${path.join(DESKTOP, 'dist')}`);
 }

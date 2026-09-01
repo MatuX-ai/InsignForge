@@ -16,6 +16,8 @@ import { Discuss } from './pages/Discuss';
 import { Report } from './pages/Report';
 import { History } from './pages/History';
 import { Settings } from './pages/Settings';
+import { Monitor } from './pages/Monitor';
+import { AuthCallback } from './pages/AuthCallback';
 import { Readme } from './pages/Readme';
 import { Faq } from './pages/Faq';
 import { OnboardingModal } from './components/OnboardingModal';
@@ -34,6 +36,8 @@ export function App() {
           <Route path="/report/:id" element={<Report />} />
           <Route path="/history" element={<History />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/monitor" element={<Monitor />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/readme" element={<Readme />} />
           <Route path="/faq" element={<Faq />} />
           <Route

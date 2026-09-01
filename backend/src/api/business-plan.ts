@@ -3,13 +3,14 @@
  *
  * POST /generate  触发异步生成 (立即返回 job)
  * GET  /status    轮询状态
- * GET  /download  下载 ZIP (success 时)
+ *
+ * 商业计划书的产物现在直接落到"历史文档"目录下的项目子目录,
+ * 由桌面端主进程通过 IPC 提供"另存"交互;不再走 HTTP 流式下载。
  */
 import { Router } from 'express';
 import { BusinessPlanService } from '../services/BusinessPlanService.js';
 import { ProjectService } from '../services/ProjectService.js';
 import { asyncHandler, ok, fail } from './response.js';
-import { reportFilenameBase } from '../utils/markdown.js';
 
 export const businessPlanRouter = Router({ mergeParams: true });
 
@@ -46,48 +47,8 @@ businessPlanRouter.get(
 );
 
 /**
- * GET /download
- * 下载 ZIP (仅 success 时返回 200 + application/zip)
- * 失败/未生成时返回 4xx 错误
- */
-businessPlanRouter.get(
-  '/download',
-  asyncHandler<{ params: { id: string } }>((req, res) => {
-    const project = ProjectService.getById(req.params.id);
-    if (!project) return fail(res, 404, '项目不存在', 404);
-
-    const job = BusinessPlanService.getStatus(req.params.id);
-    if (!job) return fail(res, 404, '尚未生成商业计划书,请先点击"生成商业计划书"', 404);
-    if (job.status === 'running') {
-      return fail(res, 409, '商业计划书仍在生成中,请稍候');
-    }
-    if (job.status === 'failed') {
-      return fail(res, 500, `生成失败:${job.error_message ?? '未知错误'}`);
-    }
-    if (!job.zip) {
-      return fail(res, 500, 'ZIP 数据丢失,请重新生成');
-    }
-
-    const base = reportFilenameBase(project);
-    // 文件名: {项目名}-商业计划书.zip
-    const zipBase = `${base}-商业计划书`;
-    const encoded = encodeURIComponent(zipBase);
-    // Node.js setHeader 拒绝非 ASCII 字符。plain filename 用项目 ID 拼 ASCII 兜底,
-    // 真实中文文件名走 RFC 5987 filename*=UTF-8'' 部分
-    const asciiFallback = `business-plan-${project.id.slice(0, 8)}.zip`;
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}.zip`
-    );
-    res.setHeader('Content-Length', job.zip.length.toString());
-    res.end(job.zip);
-  })
-);
-
-/**
  * 把内部 BpJob 转为前端可消费的形状
- * (剥掉 zip Buffer,只暴露元数据)
+ * (透传 archive_path 即 md 所在目录绝对路径)
  */
 function jobToClient(job: ReturnType<typeof BusinessPlanService.trigger>) {
   return {
@@ -100,7 +61,7 @@ function jobToClient(job: ReturnType<typeof BusinessPlanService.trigger>) {
     error_code: job.error_code,
     error_message: job.error_message,
     filenames: job.filenames,
-    /** 自动归档到"历史文档"目录后的绝对路径(供前端提示用户) */
+    /** 自动归档目录的绝对路径(指向 12 份 md 所在的文件夹),供桌面端"另存"与自动预览使用 */
     archive_path: job.archive_path ?? null,
   };
 }

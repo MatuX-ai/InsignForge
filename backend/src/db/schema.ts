@@ -120,6 +120,47 @@ CREATE TABLE IF NOT EXISTS discussion_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_discussions_created_at ON discussion_sessions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_discussions_project ON discussion_sessions(project_id);
+
+-- ============================================================
+-- v2.0: 用户配额表(按 user_id 跟踪日调用量,LLM 关键路由计费)
+-- 设计:
+--   - plan_type 复制自 users.plan_type(冗余便于独立重构)
+--   - daily_calls / last_reset_date 用于前端显示今日剩余额度
+--   - process_invocations 为进程内窗口补充(未来可接 Redis)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_quotas (
+  user_id TEXT PRIMARY KEY,
+  plan_type VARCHAR(20) NOT NULL DEFAULT 'free',
+  daily_calls INTEGER NOT NULL DEFAULT 0,
+  last_reset_date TEXT NOT NULL DEFAULT (date('now')),
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+`;
+
+/**
+ * LLM 调用结果缓存表(v1.5 持久化)
+ *
+ * 设计:
+ *   - cache_key 为 SHA256(schemaName + system + user + 关键 options),唯一索引
+ *   - schema_name 单独存一列,便于按调用点统计命中率
+ *   - expires_at 支持 TTL,过期后 getCached 返回 null 并由 clearExpired 清理
+ *   - 不缓存 chatWithTools 的多轮对话,只缓存单轮 JSON 输出
+ */
+export const LLM_CACHE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS llm_cache (
+  cache_key TEXT PRIMARY KEY,
+  schema_name TEXT NOT NULL,
+  output_json TEXT NOT NULL,
+  input_size INTEGER NOT NULL DEFAULT 0,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_cache_schema ON llm_cache(schema_name);
+CREATE INDEX IF NOT EXISTS idx_llm_cache_expires ON llm_cache(expires_at);
 `;
 
 /**

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { SCHEMA_SQL, FTS_SCHEMA_SQL } from './schema.js';
+import { SCHEMA_SQL, FTS_SCHEMA_SQL, LLM_CACHE_SCHEMA_SQL } from './schema.js';
 
 let _db: Database.Database | null = null;
 
@@ -54,9 +54,19 @@ export function getDb(): Database.Database {
     }
   }
 
+  // v2.0: user_id 双轨制迁移。为 projects / market_needs / project_reports /
+  // executions / discussion_sessions 五张表加 user_id 列 + 索引(幂等)。
+  // projects 表在初始建表脚本里已经有 user_id,这里检查重在老库。
+  ensureUserIdColumn(_db, 'projects');
+  ensureUserIdColumn(_db, 'market_needs');
+  ensureUserIdColumn(_db, 'project_reports');
+  ensureUserIdColumn(_db, 'executions');
+  ensureUserIdColumn(_db, 'discussion_sessions');
+
   // 建表(含讨论表 project_id 列与索引;旧库由上方迁移补齐后,CREATE IF NOT EXISTS 均为空操作)
   _db.exec(SCHEMA_SQL);
   _db.exec(FTS_SCHEMA_SQL);
+  _db.exec(LLM_CACHE_SCHEMA_SQL);
 
   logger.info('数据库表结构已就绪');
   return _db;
@@ -83,3 +93,26 @@ process.on('SIGTERM', () => {
   closeDb();
   process.exit(0);
 });
+
+/**
+ * v2.0: 幂等迁移工具 — 若目标表缺少 user_id 列则 ALTER。
+ * 包含 index 创建(IF NOT EXISTS,多次执行安全)。
+ *
+ * 仅作用于已存在的表;新表在 SCHEMA_SQL 中直接定义即可。
+ */
+function ensureUserIdColumn(db: Database.Database, table: string): void {
+  const exists = (
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+      .get(table) as { name: string } | undefined
+  );
+  if (!exists) return;
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'user_id')) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN user_id TEXT`);
+    logger.info({ table }, '数据库迁移:已新增 user_id 列');
+  }
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table}(user_id)`
+  );
+}

@@ -1,6 +1,6 @@
 {
   "name": "@insightforge/mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "InsightForge MCP(Model Context Protocol)服务器 —— 暴露 4 个市场调研工具给 Claude Desktop / Cline / Cursor 等 MCP 客户端。基于 @insightforge/core SDK。",
   "type": "module",
   "main": "./dist/index.cjs",

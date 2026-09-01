@@ -14,8 +14,17 @@ import { settingsRouter } from './settings.js';
 import { discussionsRouter } from './discussions.js';
 import { archivesRouter } from './archives.js';
 import { adminRouter } from './admin.js';
+import { healthRouter } from './health.js';
+import { authRouter } from './auth.js';
+import { attachUser } from '../middleware/auth.js';
 
 export const apiRouter = Router();
+
+// v2.0: 尝试从 session 挂 req.user(若启用了 OIDC)。
+// 所有路由都可以依赖 req.user;关闭鉴权时 attachUser 是 no-op
+apiRouter.use(attachUser);
+
+apiRouter.use('/auth', authRouter);
 
 apiRouter.use('/projects', projectsRouter);
 // 子路由挂在同一前缀下,以便 /projects/:id/research 等
@@ -31,3 +40,5 @@ apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/discussions', discussionsRouter);
 apiRouter.use('/archives', archivesRouter);
 apiRouter.use('/admin', adminRouter);
+// v1.3:多源采集引擎健康检查(路线图阶段 1.1)
+apiRouter.use('/health', healthRouter);

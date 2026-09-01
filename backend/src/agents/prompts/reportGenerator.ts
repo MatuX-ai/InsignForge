@@ -49,8 +49,25 @@ export const REPORT_GENERATION_SYSTEM = `你是一位资深的市场调研分析
 export function buildReportUserPrompt(
   description: string,
   dataContext: string,
-  keywords: string[]
+  keywords: string[],
+  painPointsContext = ''
 ): string {
+  // v1.4 智能化: 若有结构化痛点预抽取结果,以"已知信号"形式注入,
+  // 引导 LLM 沿用而非重新从原始数据抓取,提升报告痛点部分的可追溯性
+  const painPointSection = painPointsContext
+    ? `
+## AI 预抽取的痛点信号(v1.4 智能增强)
+以下痛点已由独立模型从采集数据中预抽取,供你参考;如能补充 / 修正 / 合并,请在 pain_points 中体现。
+
+${painPointsContext}
+
+要求:
+- 与痛点相关的关键结论,务必在 sources 中能找到对应证据
+- 如果预抽取信号与原始数据冲突,以原始数据为准
+- 如果信号明显遗漏了某条重要痛点,允许补充
+`
+    : '';
+
   return `## 产品想法
 ${description}
 
@@ -58,8 +75,7 @@ ${description}
 ${keywords.join('、')}
 
 ## 采集到的公开数据
-${dataContext}
-
+${dataContext}${painPointSection}
 ---
 
 请基于以上数据,生成结构化的市场验证报告。`;

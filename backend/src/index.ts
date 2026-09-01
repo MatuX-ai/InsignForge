@@ -14,6 +14,11 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { getDb } from './db/index.js';
 import { apiRouter } from './api/index.js';
+import {
+  startAllSchedulers,
+  stopAllSchedulers,
+} from './services/scheduler/index.js';
+import { getSessionMiddleware } from './services/auth/session.js';
 
 const app = express();
 
@@ -25,6 +30,9 @@ app.use(
   })
 );
 app.use(express.json({ limit: '2mb' }));
+
+// v2.0: 接入 express-session(为 OIDC 登录提供 cookie 载体)
+app.use(getSessionMiddleware());
 
 // 请求日志(简化版)
 app.use((req, _res, next) => {
@@ -102,6 +110,10 @@ const server = app.listen(config.PORT, () => {
     },
     `InsightForge 后端已启动 -> http://localhost:${actualPort}`
   );
+  // 启动所有已注册后台任务(v1.6: 通过统一注册表启动 LLM 缓存清理等)
+  // 与 retryMetrics 的 lazy start 不同:这些属于 housekeeping,
+  // 与是否有 LLM 调用无关,服务一启动就应该周期清理
+  startAllSchedulers();
   // 桌面模式: 通过 IPC 向父进程(Electron 主进程)上报实际端口
   if (process.send) {
     process.send({ type: 'ready', port: actualPort });
@@ -111,6 +123,8 @@ const server = app.listen(config.PORT, () => {
 // 优雅关闭
 const shutdown = (signal: string) => {
   logger.info({ signal }, '收到关闭信号');
+  // 先停调度器,避免 server.close 等待期间被并发触发清理任务
+  stopAllSchedulers();
   server.close(() => {
     logger.info('HTTP 服务已关闭');
     process.exit(0);

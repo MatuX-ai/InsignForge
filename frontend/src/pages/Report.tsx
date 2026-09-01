@@ -20,11 +20,14 @@ import { JobProgressItem } from '../components/JobProgressItem';
 import { ReportToc } from '../components/ReportToc';
 import { Tooltip } from '../components/Tooltip';
 import { ResearchProgress } from '../components/ResearchProgress';
+import { SourceContributionCard } from '../components/SourceContributionCard';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
+import { explainError } from '../lib/errorMessages';
 import type {
   DocsJob,
   BpJob,
+  BpJobStatus,
   MarketReport,
   Project,
   ReportCompetitor,
@@ -324,8 +327,8 @@ export function Report() {
   const [bpJob, setBpJob] = useState<BpJob | null>(null);
   /** 商业计划书相关错误文案 */
   const [bpError, setBpError] = useState<string | null>(null);
-  /** 商业计划书下载中(用于按钮 loading) */
-  const [bpDownloading, setBpDownloading] = useState(false);
+  /** 商业计划书"另存"操作中(用于按钮 loading) */
+  const [bpSaving, setBpSaving] = useState(false);
   /** 商业计划书轮询定时器句柄 */
   const bpTimerRef = useRef<number | null>(null);
   /** 复制成功提示 */
@@ -518,6 +521,24 @@ export function Report() {
     const timer = window.setTimeout(() => setExportResult(null), 2000);
     return () => window.clearTimeout(timer);
   }, [exportResult]);
+
+  // 商业计划书刚生成成功时,自动用系统默认应用打开首份 md 预览(仅桌面端)
+  // 仅当状态从 running → success 切换时才触发,避免重新进入页面时重复弹预览。
+  const bpPrevStatusRef = useRef<BpJobStatus | null>(null);
+  useEffect(() => {
+    if (!bpJob) return;
+    const prev = bpPrevStatusRef.current;
+    bpPrevStatusRef.current = bpJob.status;
+    if (
+      prev === 'running' &&
+      bpJob.status === 'success' &&
+      bpJob.archive_path &&
+      window.insightforge?.openPath
+    ) {
+      // 异步打开,不阻塞后续逻辑
+      void window.insightforge.openPath(`${bpJob.archive_path}\\00-封面与目录.md`);
+    }
+  }, [bpJob?.status, bpJob?.archive_path]);
 
   const isCompleted = report !== null;
   const isAnalyzing = loading && !report;
@@ -935,8 +956,8 @@ export function Report() {
                 fileTotal={bpJob.total}
                 archivePath={bpJob.archive_path ?? undefined}
                 errorMessage={bpError ?? undefined}
-                primaryLabel="下载商业计划书包"
-                primaryLoading={bpDownloading}
+                primaryLabel="另存商业计划书"
+                primaryLoading={bpSaving}
                 primaryDisabled={exportBusy !== null}
                 onPrimary={() => void handleGenerateBp()}
                 retryLabel="重新生成"
@@ -962,30 +983,35 @@ export function Report() {
           </div>
         )}
 
-        {/* 调研失败 Banner - 展示错误信息,提供手动重试入口 */}
-        {error && (
-          <div className="my-6">
-            <Banner
-              tone="error"
-              title="调研失败"
-              action={
-                retryAttempt === 0
-                  ? {
-                      label: '重试',
-                      onClick: () => void retry(),
-                    }
-                  : undefined
-              }
-            >
-              {error}
-              {retryAttempt > 0 && (
-                <div className="mt-2 text-text-secondary">
-                  🔄 正在自动重试 ({retryAttempt} / 3)…
-                </div>
-              )}
-            </Banner>
-          </div>
-        )}
+        {/* 调研失败 Banner - 展示友好错误信息,提供手动重试入口(v1.3 友好化) */}
+        {error && (() => {
+          // 把后端 errorCode 映射为中文友好提示;raw 展示在后端原始 message 处
+          const friendly = explainError(errorCode, error);
+          const showRetry = friendly.retryable && retryAttempt === 0;
+          return (
+            <div className="my-6">
+              <Banner
+                tone="error"
+                title={friendly.title}
+                action={
+                  showRetry
+                    ? {
+                        label: '重试',
+                        onClick: () => void retry(),
+                      }
+                    : undefined
+                }
+              >
+                {friendly.detail}
+                {retryAttempt > 0 && (
+                  <div className="mt-2 text-text-secondary">
+                    🔄 正在自动重试 ({retryAttempt} / 3)…
+                  </div>
+                )}
+              </Banner>
+            </div>
+          );
+        })()}
 
         {currentReport && (
           <>
@@ -1392,40 +1418,130 @@ export function Report() {
               </div>
             </section>
 
-            {/* 9. 数据来源 - 章节断点(顶部边框) */}
+            {/* 9. 数据来源 - v1.6: 贡献度可视化卡片网格 */}
             <section
               id="section-sources"
               className="mt-12 pt-8 border-t border-border/40"
             >
-              <Card title="数据来源">
+              <Card
+                title={
+                  <span className="inline-flex items-center gap-2">
+                    数据来源
+                    {currentReport.contributions && currentReport.contributions.length > 0 && (
+                      <span className="text-helper font-normal text-text-secondary">
+                        （{currentReport.contributions.length} 个来源 / 合计{' '}
+                        {currentReport.contributions.reduce((acc, c) => acc + c.count, 0)} 条）
+                      </span>
+                    )}
+                  </span>
+                }
+              >
+                {/* 贡献度分布条(v1.6) */}
+                {currentReport.contributions && currentReport.contributions.length > 0 ? (
+                  <div className="mb-6">
+                    <div className="flex w-full h-3 rounded-full overflow-hidden bg-slate-700/40 border border-border">
+                      {currentReport.contributions.map((c, i) => (
+                        <div
+                          key={c.source}
+                          className="h-full transition-all"
+                          style={{
+                            width: `${c.percentage}%`,
+                            // 按 type 取色,type 差异营造视觉区分
+                            backgroundColor:
+                              c.type === 'forum'
+                                ? '#F59E0B'
+                                : c.type === 'search'
+                                  ? '#38BDF8'
+                                  : c.type === 'social'
+                                    ? '#A855F7'
+                                    : '#10B981',
+                          }}
+                          title={`${c.source}: ${c.percentage}%`}
+                          aria-label={`${c.source} 贡献 ${c.percentage}%`}
+                        />
+                      ))}
+                    </div>
+                    {/* 占比图例:与卡片网格互为补充 */}
+                    <div className="mt-2 flex flex-wrap gap-3 text-helper text-text-secondary">
+                      {currentReport.contributions.map((c) => (
+                        <span key={c.source} className="inline-flex items-center gap-1">
+                          <span
+                            className="inline-block w-3 h-3 rounded-sm"
+                            style={{
+                              backgroundColor:
+                                c.type === 'forum'
+                                  ? '#F59E0B'
+                                  : c.type === 'search'
+                                    ? '#38BDF8'
+                                    : c.type === 'social'
+                                      ? '#A855F7'
+                                      : '#10B981',
+                            }}
+                            aria-hidden
+                          />
+                          <span>{c.source}</span>
+                          <span className="text-text-tertiary">{c.percentage}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* 贡献度卡片网格(v1.6) */}
+                {currentReport.contributions && currentReport.contributions.length > 0 && (
+                  <div className="mb-6">
+                    <div className="text-helper text-text-secondary mb-3">
+                      各来源贡献度（按加权占比降序）
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {currentReport.contributions.map((c) => {
+                        const max = currentReport.contributions![0]?.percentage ?? 0;
+                        return (
+                          <SourceContributionCard
+                            key={c.source}
+                            contribution={c}
+                            maxPercentage={max}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 原始来源链接列表(保留,老报告/无 contributions 时仍可用) */}
                 {currentReport.sources.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无来源</div>
                 ) : (
-                  <ul className="space-y-2">
-                    {currentReport.sources.map((s, i) => (
-                      <li key={i} className="text-body">
-                        {s.url ? (
-                          <a
-                            href={s.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-primary hover:underline break-all"
-                          >
-                            [{i + 1}] {s.title}
-                          </a>
-                        ) : (
-                          <span className="text-text-primary break-all">
-                            [{i + 1}] {s.title}
-                          </span>
-                        )}
-                        {s.source && (
-                          <span className="ml-2 text-helper text-text-secondary">
-                            ({s.source})
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  <div className={currentReport.contributions && currentReport.contributions.length > 0 ? 'pt-4 border-t border-border' : ''}>
+                    {currentReport.contributions && currentReport.contributions.length > 0 && (
+                      <div className="text-helper text-text-secondary mb-2">原始引用</div>
+                    )}
+                    <ul className="space-y-2">
+                      {currentReport.sources.map((s, i) => (
+                        <li key={i} className="text-body">
+                          {s.url ? (
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary hover:underline break-all"
+                            >
+                              [{i + 1}] {s.title}
+                            </a>
+                          ) : (
+                            <span className="text-text-primary break-all">
+                              [{i + 1}] {s.title}
+                            </span>
+                          )}
+                          {s.source && (
+                            <span className="ml-2 text-helper text-text-secondary">
+                              ({s.source})
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </Card>
             </section>
@@ -1596,20 +1712,20 @@ export function Report() {
 
                   <Button
                     variant="primary"
-                    loading={bpJob?.status === 'running' || bpDownloading}
+                    loading={bpJob?.status === 'running' || bpSaving}
                     disabled={
                       exportBusy !== null ||
                       bpJob?.status === 'running' ||
-                      bpDownloading
+                      bpSaving
                     }
                     onClick={() => handleGenerateBp()}
                   >
-                    {bpDownloading
-                      ? '下载中...'
+                    {bpSaving
+                      ? '另存中...'
                       : bpJob?.status === 'running'
                         ? '生成中...'
                         : bpJob?.status === 'success'
-                          ? '下载商业计划书'
+                          ? '另存商业计划书'
                           : bpJob?.status === 'failed'
                             ? '重新生成商业计划书'
                             : '生成商业计划书'}
@@ -2010,27 +2126,61 @@ export function Report() {
   }
 
   /**
-   * 生成/下载商业计划书
-   *   - 未生成或已失败: 触发生成,启动轮询
-   *   - 生成成功: 下载 ZIP
+   * 生成/另存商业计划书
+   *   - 未生成或已失败: 触发生成,启动轮询(success 时由 useEffect 自动调预览)
+   *   - 生成成功: 弹原生目录选择对话框,把 12 份 md 复制到用户选定位置
    * 函数声明会被 hoisting,JSX 中可直接引用
    */
   async function handleGenerateBp(): Promise<void> {
     if (!id) return;
 
-    // 成功 → 下载
+    // 成功 → 另存(桌面端专属交互)
     if (bpJob?.status === 'success') {
-      setBpDownloading(true);
+      if (!bpJob.archive_path) {
+        await dialog.alert({
+          title: '另存失败',
+          message: '商业计划书归档路径丢失,请重新生成',
+          tone: 'danger',
+        });
+        return;
+      }
+      if (!window.insightforge?.saveDir) {
+        await dialog.alert({
+          title: '桌面端专属功能',
+          message: '“另存商业计划书”仅在桌面端可用。',
+          tone: 'warning',
+        });
+        return;
+      }
+      setBpSaving(true);
       try {
-        downloadUrl(api.bpDownloadUrl(id));
+        const safeName = (project?.name ?? '项目').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+        const res = await window.insightforge.saveDir({
+          sourceDir: bpJob.archive_path,
+          defaultName: `${safeName}-商业计划书`,
+        });
+        if (res.canceled) return; // 用户主动取消,静默
+        if (res.ok && res.targetDir) {
+          await dialog.alert({
+            title: '另存成功',
+            message: `已另存到：\n${res.targetDir}`,
+            tone: 'primary',
+          });
+        } else {
+          await dialog.alert({
+            title: '另存失败',
+            message: res.message ?? '未知错误',
+            tone: 'danger',
+          });
+        }
       } catch (err) {
         await dialog.alert({
-          title: '下载失败',
+          title: '另存失败',
           message: err instanceof Error ? err.message : String(err),
           tone: 'danger',
         });
       } finally {
-        setBpDownloading(false);
+        setBpSaving(false);
       }
       return;
     }
@@ -2058,6 +2208,7 @@ export function Report() {
             if (next.status === 'failed') {
               setBpError(next.error_message ?? '生成失败');
             }
+            // success → 自动预览由 useEffect 监听 bpJob.status 转变触发
           } catch {
             if (bpTimerRef.current !== null) {
               window.clearInterval(bpTimerRef.current);

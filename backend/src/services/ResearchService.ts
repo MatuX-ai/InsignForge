@@ -11,6 +11,7 @@ import { MarketResearcher } from '../agents/MarketResearcher.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { MissingLlmApiKeyError } from './llm/LLMClient.js';
+import { SourceError, sourceErrorKindToCode } from './search/reliability.js';
 import type { Execution } from '../types/index.js';
 
 /**
@@ -72,9 +73,12 @@ async function runResearch(
     logger.error({ err, projectId }, '调研流程失败');
     ExecutionService.appendLog(executionId, 'error', message);
     ExecutionService.markFinished(executionId, 'failed');
-    // 识别特定业务错误(仅内存),供前端弹窗
+    // 识别特定业务错误(仅内存),供前端弹窗 / 友好提示
     if (err instanceof MissingLlmApiKeyError) {
       ExecutionService.setErrorCode(executionId, 'MISSING_API_KEY');
+    } else if (err instanceof SourceError) {
+      // 多源采集引擎细分错误(v1.3),前端会映射为具体中文原因 + 是否可重试
+      ExecutionService.setErrorCode(executionId, sourceErrorKindToCode(err.kind));
     }
     ProjectService.updateStatus(projectId, 'failed', message);
   }

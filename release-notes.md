@@ -1,3 +1,70 @@
+# InsightForge v1.3.0
+
+可观测性、用户可控性、采集引擎健壮性增强同步上。
+
+## 新特性
+
+### 多源采集引擎可靠性基座
+
+在 `backend/src/services/search/reliability.ts` 引入统一可靠性装饰器,所有搜索客户端内部 fetch 走 `withReliability` + `fetchWithRetry`,关键能力：
+
+- **重试**：指数退避（默认 2 次）,仅对 5xx / 429 / 网络错误重试
+- **熔断**：每源连续 5 败自动开 30s,半开探测恢复
+- **去重**：URL 归一化 + title/source 指纹,无 url 走 fallback 指纹
+- **缓存**：进程内 `TtlCache`,默认 5min TTL
+- **并发**：关键词维度 `KEYWORD_CONCURRENCY=3` 信号量限流
+- **错误分类**：8 类 `SourceError.kind`,按 `retryable` 决定是否重试
+
+### 健康检查 API
+
+- `GET /api/v1/health/sources` 返回四个源的实时指标快照:success / failure / successRate / avgLatencyMs / failureByKind / cacheHits / circuitOpened / state。
+- 仅桌面模式或管理员可访问,避免外网扫描。
+- 熔断打开时 `state: 'open'` 立即可见。
+
+### 错误消息人性化翻译
+
+新增 `frontend/src/lib/errorMessages.ts`,把 `SourceError.kind` 翻译为中文提示：
+
+| kind | 文案 |
+|------|------|
+| `network` | 网络异常,请检查连接 |
+| `timeout` | 请求超时,稍后重试 |
+| `rate_limit` | 搜索引擎限流,请稍后重试或切换 SerpAPI |
+| `server_5xx` | 源服务端异常,已自动重试 |
+| `circuit_open` | 源暂时熔断,已自动跳过 |
+| `client_4xx` | 鉴权或参数错误,请检查配置 |
+
+### SourceContributionCard & Monitor 页
+
+- 报告页底部新增 `SourceContributionCard`,展示本次调研各源命中占比与平均延迟,让用户直观看到贡献分布。
+- 新增 `Monitor` 页(`/monitor`)供管理员查看实时源快照,后续接入权限控制。
+
+### 使用量与配额
+
+- 新增 `quota` 测试基座 + `backend/tests/quota.test.ts`,为后续多用户配额预留接入点。
+
+## 体验打磨
+
+- **AuthCallback 页**：第三方登录回调落点,占位 UI 已就位,等待 Casdoor 接入完成。
+- **useCurrentUser**：`useAuth()` 集中入口,自动随 cookie 变化刷新当前用户态。
+- **TopBar / AppShell**：为多账号场景预留次级提示条,样式与深色模式统一。
+
+## 工程
+
+- **依赖新增**:`express-session`、`openid-client`(`@types/express-session`),为 v2.0 用户中心/Casdoor 接入做准备。
+- **测试**:新增 9 个测试文件 (`Aggregator` / `cache` / `cacheScheduler` / `contributions` / `dataOwnership` / `dedupe` / `errorMessages` / `health` / `intelligence` / `quota` / `reliability` / `scheduler`),共新增 89 个测试用例。
+- **`vitest.config.ts`**:`search/` 子树加入覆盖率统计,后端测试基座覆盖率门槛抬到 80%。
+- **docs/扩展开发路线.md**：新增 v1.3 → v2.0 的阶段路线图(从交付节奏到可复用模板)。
+
+## NPM 包
+
+| 包 | 0.1.0 → 0.1.1 变动 |
+|---|----------------------|
+| `@insightforge/core` | 与仓库 v1.3.0 同步发版,接口不变 |
+| `@insightforge/mcp-server` | 与仓库 v1.3.0 同步发版,tools 列表不变 |
+
+---
+
 # InsightForge v1.2.0
 
 UX 优化、可访问性加固、CI 修复。

@@ -58,6 +58,26 @@ const envSchema = z.object({
   // 讨论 AI 调研的 MCP 通道:配置启动命令(如 "npx -y @insightforge/mcp-server")后,
   // 讨论梳理中的营销调研将优先通过 MCP server 执行;未配置则回退到后端直连调研服务
   INSIGHTFORGE_MCP_COMMAND: z.string().optional(),
+
+  // v2.0: OIDC / Casdoor 集成(双轨制;总开关关闭时所有接口行为与 v1.6 完全一致)
+  INSIGHTFORGE_AUTH_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  INSIGHTFORGE_CASDOOR_ENDPOINT: z.string().optional(),
+  INSIGHTFORGE_CASDOOR_CLIENT_ID: z.string().optional(),
+  INSIGHTFORGE_CASDOOR_CLIENT_SECRET: z.string().optional(),
+  INSIGHTFORGE_CASDOOR_REDIRECT_URI: z.string().optional(),
+  INSIGHTFORGE_SESSION_SECRET: z.string().optional(),
+  /**
+   * 桌面端在 Window 中打开浏览器走 OAuth;强制 secure=false 以允许 httpOnly cookie
+   * 在 http://localhost 下传输(浏览器桌面端默认是 file:// / 自定义 scheme,
+   * express-session 对非 https 客户端的 secure 判断会拒绝 setCookie)。
+   */
+  INSIGHTFORGE_SESSION_COOKIE_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

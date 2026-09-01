@@ -21,6 +21,9 @@ import type {
   DiscussionOp,
   DiscussionMode,
   HistoryArchives,
+  SchedulerStatusResponse,
+  SystemHealthResponse,
+  AuthMeResponse,
 } from '../types';
 
 const BASE = '/api/v1';
@@ -30,6 +33,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${BASE}${path}`, {
       headers: { 'Content-Type': 'application/json' },
+      // v2.0: 必须携带 cookie(express-session / if.sid)以走鉴权分支
+      credentials: 'include',
       ...init,
     });
   } catch (err) {
@@ -185,13 +190,6 @@ export const api = {
   getBpStatus: (projectId: string) =>
     request<BpJob>(`/projects/${projectId}/business-plan/status`),
 
-  /**
-   * 商业计划书 ZIP 下载地址(相对路径)
-   * 直接触发下载,避免 blob + a.click 在 Electron 保存对话框期间被 revoke 导致失败
-   */
-  bpDownloadUrl: (projectId: string) =>
-    `/projects/${projectId}/business-plan/download`,
-
   // ----- 报告导出 -----
   /**
    * 报告下载地址(.md | .pdf, 相对路径)
@@ -335,4 +333,23 @@ export const api = {
   /** 轮询画布整理任务状态 */
   getOrganizeStatus: (id: string) =>
     request<DiscussionChatJob>(`/discussions/${id}/organize/status`),
+
+  // ----- v1.6 监控面板 -----
+  /** 系统级健康(DB / LLM / Cache / Scheduler) */
+  getSystemHealth: () => request<SystemHealthResponse>('/health/system'),
+
+  /** 所有已注册调度任务的运行状态(来自方向 ① 的注册表) */
+  getSchedulerStatus: () => request<SchedulerStatusResponse>('/admin/scheduler/status'),
+
+  // ----- v2.0 OIDC / Casdoor -----
+  /** 当前登录用户(未登录返回 { user: null }) */
+  getMe: () => request<AuthMeResponse>('/auth/me'),
+
+  /** 触发 OIDC 登录(浏览器跳转到 Casdoor);前端直接 window.location.href 即可 */
+  startLogin: () => {
+    window.location.href = `${BASE}/auth/login`;
+  },
+
+  /** 注销 */
+  logout: () => request<{ loggedOut: boolean }>('/auth/logout', { method: 'POST' }),
 };

@@ -28,6 +28,50 @@ ipcMain.handle('open-path', async (_event, p) => {
   }
 });
 
+/**
+ * IPC: 弹原生目录选择对话框,把 sourceDir 整个目录复制到用户选定位置。
+ * 用于商业计划书的"另存为目录"交互(桌面端不依赖浏览器另存路径)。
+ *
+ * 入参: { sourceDir: string; defaultName: string }
+ * 返回: { ok, canceled?, targetDir?, message? }
+ */
+ipcMain.handle('save-dir', async (_event, args) => {
+  const sourceDir = args && typeof args === 'object' ? args.sourceDir : '';
+  const defaultName = args && typeof args === 'object' && typeof args.defaultName === 'string'
+    ? args.defaultName
+    : '商业计划书';
+
+  if (!sourceDir || typeof sourceDir !== 'string' || !fs.existsSync(sourceDir)) {
+    return { ok: false, message: '源目录不存在或路径无效' };
+  }
+  if (!fs.statSync(sourceDir).isDirectory()) {
+    return { ok: false, message: '源路径不是一个目录' };
+  }
+
+  try {
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      title: '选择另存到的目标目录',
+      buttonLabel: '另存到此',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+    const parent = result.filePaths[0];
+    // 子目录名重名时自动追加 "(1)"、"(2)" 后缀,避免覆盖
+    let target = path.join(parent, defaultName);
+    let i = 1;
+    while (fs.existsSync(target)) {
+      target = path.join(parent, `${defaultName} (${i++})`);
+    }
+    // 递归复制整个目录(Node 16.7+ 内置 fs.cpSync;项目使用 Node 22+)
+    fs.cpSync(sourceDir, target, { recursive: true });
+    return { ok: true, targetDir: target };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 /** 单实例锁: 防止重复启动 */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -42,6 +86,48 @@ function resolveResourceDir() {
   return app.isPackaged
     ? process.resourcesPath
     : path.resolve(__dirname, 'resources');
+}
+
+/**
+ * 解析可写的数据目录。
+ *
+ * ⚠️ packaged 模式必须用 app.getPath('userData'):
+ *   - electron-builder 默认 asar:true, main.cjs 落在 resources/app.asar 里
+ *   - asar 是只读虚拟文件系统, fs.mkdirSync 写 asar 路径会报 EROFS,
+ *     better-sqlite3 open 也会报 SQLITE_CANTOPEN, 后端必然 exit(1)
+ *   - NSIS 装到 C:\Program Files\InsightForge 时, "Program Files" 也没有写权限
+ *     (即使不开 asar 也通不过)
+ *   - 唯一稳妥的写入位置: %APPDATA%\ai.insightforge.desktop\
+ *
+ * dev 模式保留旧行为 (desktop/data/), 便于本地开发/冒烟.
+ */
+function resolveUserDataDir() {
+  if (app.isPackaged) {
+    return app.getPath('userData'); // %APPDATA%\ai.insightforge.desktop
+  }
+  const dataDir = path.join(__dirname, 'data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  return dataDir;
+}
+
+/**
+ * resolveUserDataDir 的安全版本: 用于在 app 还未 ready 时拿到路径
+ * (供 showResourceNotReadyPage 提示用户/重置数据库使用)
+ */
+function resolveUserDataDirSafe() {
+  try {
+    return app.isPackaged ? app.getPath('userData') : path.join(__dirname, 'data');
+  } catch {
+    return path.join(__dirname, 'data');
+  }
+}
+
+/** 后端 stdout/stderr 末尾 4KB ring buffer, 用于失败页展示 */
+const BACKEND_LOG_TAIL_BYTES = 4096;
+let backendLogTail = '';
+function appendBackendLog(chunk) {
+  const text = chunk.toString('utf8');
+  backendLogTail = (backendLogTail + text).slice(-BACKEND_LOG_TAIL_BYTES);
 }
 
 /** 解析后端子进程入口 */
@@ -77,6 +163,7 @@ function startBackend() {
   }
 
   const userData = app.getPath('userData');
+  const dataDir = resolveUserDataDir();
   const env = {
     ...process.env,
     // 关键: 让 electron.exe 以纯 Node 模式运行子进程
@@ -84,9 +171,11 @@ function startBackend() {
     NODE_ENV: 'production',
     // 随机端口, 避免与用户本机其他服务冲突
     PORT: '0',
-    // 数据与配置写入用户数据目录(可写, 持久化)
-    DATABASE_URL: path.join(__dirname, 'data', 'insightforge.db'),
-    DOTENV_CONFIG_PATH: path.join(__dirname, 'data', '.env'),
+    // 数据与配置写入可写数据目录 (packaged 走 %APPDATA%, dev 走 desktop/data/).
+    // ⚠️ packaged 模式下 __dirname 位于 resources/app.asar 只读虚拟文件系统,
+    //           写 asar 路径会立即 EROFS / SQLITE_CANTOPEN, 后端必然 exit(1).
+    DATABASE_URL: path.join(dataDir, 'insightforge.db'),
+    DOTENV_CONFIG_PATH: path.join(dataDir, '.env'),
     // 托管前端静态资源
     SERVE_FRONTEND: path.join(resolveResourceDir(), 'frontend-dist'),
     // 历史文档自动归档目录(开发模式: 项目根/历史文档; 打包后: 用户数据目录)
@@ -97,15 +186,19 @@ function startBackend() {
     OPENSERP_URL: process.env.OPENSERP_URL || 'http://localhost:8080',
   };
 
+  // 供调试/排错时定位数据目录
+  console.log(`[desktop] data dir = ${dataDir}`);
+  console.log(`[desktop] packaged = ${app.isPackaged}, userData = ${userData}`);
+
   const child = fork(entry, [], {
     env,
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
 
-  child.stdout?.on('data', (d) => process.stdout.write(`[backend] ${d}`));
-  child.stderr?.on('data', (d) => process.stderr.write(`[backend] ${d}`));
-  child.on('exit', (code) => {
-    console.log(`[desktop] 后端进程退出 code=${code}`);
+  child.stdout?.on('data', (d) => { appendBackendLog(d); process.stdout.write(`[backend] ${d}`); });
+  child.stderr?.on('data', (d) => { appendBackendLog(d); process.stderr.write(`[backend] ${d}`); });
+  child.on('exit', (code, signal) => {
+    console.log(`[desktop] 后端进程退出 code=${code} signal=${signal ?? 'none'}`);
     backendProc = null;
   });
 
@@ -181,8 +274,17 @@ function createWindow(port) {
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
 }
 
-/** "资源未就绪" 页面(双保险: 强制设置 title 与项目品牌) */
+/** "资源未就绪" 页面(含最近后端日志 + 可写路径提示, 方便排错) */
 function showResourceNotReadyPage(reason) {
+  const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+
+  const userDataDir = resolveUserDataDirSafe();
+  const dbPath = path.join(userDataDir, 'insightforge.db');
+  const envPath = path.join(userDataDir, '.env');
+  const tailText = backendLogTail ? backendLogTail.trim() : '';
+
   const html = `<!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8" />
 <title>InsightForge</title>
@@ -194,9 +296,9 @@ function showResourceNotReadyPage(reason) {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
                  "Microsoft YaHei", sans-serif;
     display:flex; align-items:center; justify-content:center;
-    height:100vh; padding:24px; box-sizing:border-box;
+    min-height:100vh; padding:24px; box-sizing:border-box;
   }
-  .card { text-align:center; max-width:560px; }
+  .card { text-align:left; max-width:760px; width:100%; }
   .badge {
     display:inline-block; padding:4px 10px; border-radius:999px;
     background:rgba(56,189,248,0.15); color:#7DD3FC;
@@ -207,23 +309,38 @@ function showResourceNotReadyPage(reason) {
   code {
     background:rgba(148,163,184,0.15); padding:2px 6px; border-radius:4px;
     font-size:13px; color:#E2E8F0;
+    word-break:break-all;
   }
-  .hint { margin-top:18px; font-size:12px; color:#64748B; }
+  .hint { margin-top:10px; font-size:12px; color:#64748B; line-height:1.6; }
+  pre.log {
+    max-height:240px; overflow:auto;
+    background:#020617; color:#CBD5E1;
+    padding:12px; border-radius:6px;
+    font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin-top:12px; white-space:pre-wrap; word-break:break-all;
+  }
+  hr { border:none; border-top:1px solid rgba(148,163,184,0.2); margin:14px 0; }
 </style>
 </head><body>
 <div class="card">
   <span class="badge">InsightForge Desktop</span>
   <h1>资源未就绪</h1>
-  <p>请先在项目根目录执行 <code>xpm run build:desktop</code> (或 <code>npm run build:desktop</code>) 完成构建后重试。</p>
-  <p class="hint">原因: ${reason}</p>
+  <p>${escHtml(reason)}</p>
+  ${tailText ? `<pre class="log">${escHtml(tailText)}</pre>` : ''}
+  <hr />
+  <p class="hint">用户数据目录: <code>${escHtml(userDataDir)}</code></p>
+  <p class="hint">数据库文件:&nbsp;&nbsp;&nbsp;&nbsp; <code>${escHtml(dbPath)}</code></p>
+  <p class="hint">环境变量文件: <code>${escHtml(envPath)}</code></p>
+  <p class="hint">若数据库损坏, 可手动删除上述数据库文件后重启。</p>
+  <p class="hint">需要技术支持请把上方 "原因 + 后端日志" 截屏发给团队。</p>
 </div>
 </body></html>`;
 
   const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
   const iconPath = resolveWindowIcon();
   const win = new BrowserWindow({
-    width: 720,
-    height: 420,
+    width: 760,
+    height: 560,
     backgroundColor: '#0F172A',
     title: 'InsightForge',
     icon: iconPath,
@@ -276,7 +393,8 @@ async function bootstrap() {
     app.setAppUserModelId('ai.insightforge.desktop');
   }
 
-  // 统一下载处理: 报告 / 文档 / 商业计划书 / 落地页等文件保存
+  // 统一下载处理: 报告 / 开发文档 / 落地页等文件保存
+  // (商业计划书不再走 HTTP 下载,改为走 IPC save-dir 弹目录对话框另存)
   setupDownloadHandler();
 
   const entry = resolveBackendEntry();

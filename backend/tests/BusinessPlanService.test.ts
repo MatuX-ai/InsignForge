@@ -10,20 +10,48 @@
  *   6. trigger: LLM 返回非法 schema → job 进入 failed 状态
  *   7. trigger: LLM 缺失部分文档 → 缺失文档以占位补齐,status 仍为 success
  *   8. getStatus: 不存在时返回 null
- *   9. getZip: 未成功时返回 null
- *   10. reset: 删除指定 projectId 的 job
- *   11. trigger: 12 份文档被正确打包 (ZIP 长度 > 0,EOCD 签名正确)
- *   12. trigger: MISSING_API_KEY 错误码正确传递
+ *   9. reset: 删除指定 projectId 的 job
+ *  10. trigger: 12 份文档被正确落盘到归档目录(archive_path 指向该目录)
+ *  11. trigger: MISSING_API_KEY 错误码正确传递
  *
  * Mock 策略:
  *   - chatJsonWithSchemaRetry (LLMClient) → vi.fn() 控制返回值(替代 schema 校验与重试层)
  *   - ProjectService.getById → vi.fn() 控制项目查询
  *   - ReportService.getByProjectId → vi.fn() 控制报告查询
+ *   - config.HISTORY_DOC_DIR → 指向临时目录,避免污染真实归档目录
  *   - 用 vi.waitFor 等待 fire-and-forget 异步任务完成
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // Mock 依赖 (必须在 import BusinessPlanService 之前)
+// 把 HISTORY_DOC_DIR 指向临时目录,避免落盘到真实归档目录。
+// vi.mock 工厂会被 hoist 到文件顶部,无法访问顶层 import 的 os/path,
+// 故在工厂内部用 require 拿到它(同步、无副作用)。
+vi.mock('../src/config.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/config.js')>(
+    '../src/config.js'
+  );
+  const os = require('node:os');
+  const _path = require('node:path');
+  const _fs = require('node:fs');
+  const tempDir = _path.join(
+    os.tmpdir(),
+    `bp-test-${process.pid}-${Date.now()}`
+  );
+  _fs.mkdirSync(tempDir, { recursive: true });
+  // 暴露给 afterAll 用于清理
+  (globalThis as Record<string, unknown>).__bpTestTempDir = tempDir;
+  return {
+    ...actual,
+    config: {
+      ...actual.config,
+      HISTORY_DOC_DIR: tempDir,
+    },
+  };
+});
+
 // Services v1.2 调用 chatJsonWithSchemaRetry(自带 schema 校验与重试)。
 // 为了让测试既能验证 service 处理逻辑,又不发起真实 LLM 请求,
 // 这里直接 mock chatJsonWithSchemaRetry:
@@ -157,6 +185,14 @@ afterEach(() => {
   }
 });
 
+afterAll(() => {
+  // 清理临时目录(由 vi.mock 工厂创建并暴露在 globalThis 上)
+  const tempDir = (globalThis as Record<string, unknown>).__bpTestTempDir;
+  if (typeof tempDir === 'string') {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 describe('BusinessPlanService.trigger - 基本行为', () => {
   it('首次 trigger 立即返回 job (status=running)', () => {
     const job = BusinessPlanService.trigger('p1');
@@ -270,17 +306,34 @@ describe('BusinessPlanService.trigger - 错误路径', () => {
 });
 
 describe('BusinessPlanService.trigger - 成功路径', () => {
-  it('LLM 返回 12 份文档 → job 成功,filenames 按 BP_FILENAMES 顺序', async () => {
+  it('LLM 返回 12 份文档 → job 成功,archive_path 指向含 12 份 md 的目录', async () => {
     BusinessPlanService.trigger('p1');
     await vi.waitFor(() => BusinessPlanService.getStatus('p1')?.status === 'success');
     const job = BusinessPlanService.getStatus('p1');
     expect(job?.progress).toBe(12);
     expect(job?.filenames).toEqual(BP_FILENAMES);
-    expect(job?.zip).toBeInstanceOf(Buffer);
-    expect((job?.zip?.length ?? 0)).toBeGreaterThan(0);
     expect(job?.finished_at).toMatch(/T/);
     expect(job?.error_code).toBeNull();
     expect(job?.error_message).toBeNull();
+
+    // archive_path 应该是真实存在的目录
+    expect(job?.archive_path).toBeTruthy();
+    expect(fs.existsSync(job!.archive_path!)).toBe(true);
+    expect(fs.statSync(job!.archive_path!).isDirectory()).toBe(true);
+
+    // 目录下应该有 12 份 .md 文件,文件名与 BP_FILENAMES 一致
+    const written = fs.readdirSync(job!.archive_path!).sort();
+    expect(written).toEqual([...BP_FILENAMES].sort());
+    expect(written).toHaveLength(12);
+  });
+
+  it('归档目录下每份 md 都包含 LLM 实际生成的内容', async () => {
+    BusinessPlanService.trigger('p1');
+    await vi.waitFor(() => BusinessPlanService.getStatus('p1')?.status === 'success');
+    const job = BusinessPlanService.getStatus('p1');
+    const file = path.join(job!.archive_path!, '01-执行摘要.md');
+    const content = fs.readFileSync(file, 'utf8');
+    expect(content).toContain('执行摘要');
   });
 
   it('LLM 缺失部分文档 → 用占位补齐,status 仍为 success', async () => {
@@ -296,45 +349,28 @@ describe('BusinessPlanService.trigger - 成功路径', () => {
     const job = BusinessPlanService.getStatus('p1');
     expect(job?.filenames).toEqual(BP_FILENAMES); // 12 份都补齐
     expect(job?.filenames.length).toBe(12);
-  });
 
-  it('ZIP 包含正确的 EOCD 签名 (有效 ZIP 文件)', async () => {
-    BusinessPlanService.trigger('p1');
-    await vi.waitFor(() => BusinessPlanService.getStatus('p1')?.status === 'success');
-    const zip = BusinessPlanService.getZip('p1');
-    expect(zip).toBeInstanceOf(Buffer);
-    // ZIP 文件 EOCD 记录签名: 0x06054b50
-    expect(zip!.readUInt32LE(zip!.length - 22)).toBe(0x06054b50);
+    // 缺失的 5 份也应落盘为占位文件
+    const written = fs.readdirSync(job!.archive_path!);
+    expect(written).toHaveLength(12);
   });
 });
 
-describe('BusinessPlanService.getStatus / getZip / reset', () => {
+describe('BusinessPlanService.getStatus / reset', () => {
   it('getStatus: 不存在的 projectId → null', () => {
     expect(BusinessPlanService.getStatus('nonexistent')).toBeNull();
   });
 
-  it('getZip: 不存在的 projectId → null', () => {
-    expect(BusinessPlanService.getZip('nonexistent')).toBeNull();
-  });
-
-  it('getZip: running 状态 → null (不允许下载未完成的)', () => {
+  it('running 状态 → archive_path=null', () => {
     BusinessPlanService.trigger('p1');
-    expect(BusinessPlanService.getZip('p1')).toBeNull();
+    expect(BusinessPlanService.getStatus('p1')?.archive_path).toBeNull();
   });
 
-  it('getZip: failed 状态 → null', async () => {
+  it('failed 状态 → archive_path=null', async () => {
     mockChatJson.mockRejectedValue(new Error('boom'));
     BusinessPlanService.trigger('p1');
     await vi.waitFor(() => BusinessPlanService.getStatus('p1')?.status === 'failed');
-    expect(BusinessPlanService.getZip('p1')).toBeNull();
-  });
-
-  it('getZip: success 状态 → 返回 Buffer', async () => {
-    BusinessPlanService.trigger('p1');
-    await vi.waitFor(() => BusinessPlanService.getStatus('p1')?.status === 'success');
-    const zip = BusinessPlanService.getZip('p1');
-    expect(zip).toBeInstanceOf(Buffer);
-    expect(zip!.length).toBeGreaterThan(100);
+    expect(BusinessPlanService.getStatus('p1')?.archive_path).toBeNull();
   });
 
   it('reset: 删除指定 projectId 的 job', async () => {

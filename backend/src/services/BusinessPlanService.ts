@@ -3,7 +3,8 @@
  *
  * 职责:
  *   1. 基于已生成的市场报告,调用 LLM 生成 12 份商业计划书文档
- *   2. 把多份 md 文件打包为 ZIP Buffer (使用 utils/zip.ts)
+ *   2. 把 12 份 md 文本落盘到"历史文档"目录下的项目子目录
+ *      (不再打包成 ZIP,便于桌面端直接打开预览)
  *   3. 在内存中维护生成状态 (running / success / failed),供前端轮询
  *
  * 状态存储策略:
@@ -26,8 +27,7 @@ import {
   BP_FILENAMES,
   type ValidatedBpResponse,
 } from '../agents/schemas/BusinessPlanSchema.js';
-import { createZipBuffer, type ZipEntry } from '../utils/zip.js';
-import { saveZipToHistoryDoc } from '../utils/archive.js';
+import { saveMdsToHistoryDoc } from '../utils/archive.js';
 
 /** 单个项目的商业计划书生成状态 */
 export interface BpJob {
@@ -42,11 +42,9 @@ export interface BpJob {
   finished_at: string | null;
   error_code: 'MISSING_API_KEY' | 'INTERNAL_ERROR' | null;
   error_message: string | null;
-  /** 生成完成后的 ZIP Buffer */
-  zip: Buffer | null;
-  /** ZIP 内文件名列表 (调试用,前端不需要) */
+  /** 已写入的文件名列表(顺序与 BP_FILENAMES 一致) */
   filenames: string[];
-  /** 自动归档到"历史文档"目录后的绝对路径(未归档为 null) */
+  /** 自动归档到"历史文档"目录后的绝对路径(指向 md 所在目录,未归档为 null) */
   archive_path: string | null;
 }
 
@@ -65,7 +63,6 @@ function newRunningJob(): BpJob {
     finished_at: null,
     error_code: null,
     error_message: null,
-    zip: null,
     filenames: [],
     archive_path: null,
   };
@@ -94,12 +91,6 @@ export const BusinessPlanService = {
     return jobs.get(projectId) ?? null;
   },
 
-  /** 获取 ZIP(若未成功则返回 null) */
-  getZip(projectId: string): Buffer | null {
-    const job = jobs.get(projectId);
-    return job?.status === 'success' ? job.zip : null;
-  },
-
   /** 重置(前端"重新生成"按钮使用) */
   reset(projectId: string): void {
     jobs.delete(projectId);
@@ -107,7 +98,7 @@ export const BusinessPlanService = {
 };
 
 /**
- * 后台执行:校验报告 -> 调用 LLM -> 校验 schema -> 打包 ZIP -> 更新状态
+ * 后台执行:校验报告 -> 调用 LLM -> 校验 schema -> 写盘归档 -> 更新状态
  */
 async function runBp(projectId: string, job: BpJob): Promise<void> {
   try {
@@ -142,9 +133,9 @@ async function runBp(projectId: string, job: BpJob): Promise<void> {
     );
 
     job.progress = TOTAL;
-    job.current_step = '正在打包文档...';
+    job.current_step = '正在落盘文档...';
 
-    // ---------- 3. 校验文件名覆盖度 ----------
+    // ---------- 2. 校验文件名覆盖度 ----------
     const produced = new Set(bp.documents.map((d) => d.filename));
     const missing = BP_FILENAMES.filter((f) => !produced.has(f));
     if (missing.length > 0) {
@@ -154,46 +145,45 @@ async function runBp(projectId: string, job: BpJob): Promise<void> {
       );
     }
 
-    // ---------- 4. 按 BP_FILENAMES 顺序整理 + 缺失补占位 ----------
-    const entries: ZipEntry[] = BP_FILENAMES.map((filename) => {
+    // ---------- 3. 按 BP_FILENAMES 顺序整理 + 缺失补占位 ----------
+    const entries = BP_FILENAMES.map((filename) => {
       const found = bp.documents.find((d) => d.filename === filename);
       if (found) {
-        return { path: filename, content: found.content };
+        return { filename, content: found.content };
       }
-      // 缺失占位,避免 ZIP 内出现空文件
+      // 缺失占位,避免目录里出现空文件
       return {
-        path: filename,
+        filename,
         content: buildPlaceholder(filename),
       };
     });
 
-    // ---------- 5. 打包 ZIP ----------
-    const zip = createZipBuffer(entries);
-
-    // ---------- 6. 自动归档到"历史文档"目录(重启后文件仍在) ----------
-    let archivePath: string | null = null;
+    // ---------- 4. 落盘到"历史文档"目录下的项目子目录 ----------
+    let archiveDir: string | null = null;
+    let writtenFilenames: string[] = [];
     try {
-      archivePath = saveZipToHistoryDoc({
+      const result = saveMdsToHistoryDoc({
         projectName: project.name,
         category: '商业计划书',
-        zip,
+        entries,
       });
+      archiveDir = result.dir;
+      writtenFilenames = result.filenames;
     } catch (err) {
       logger.error(
         { err, projectId },
-        '商业计划书自动归档到历史文档失败(不影响下载)'
+        '商业计划书自动归档到历史文档失败(不影响生成结果)'
       );
     }
 
-    // ---------- 7. 更新 job 状态 ----------
-    job.filenames = entries.map((e) => e.path);
-    job.zip = zip;
-    job.archive_path = archivePath;
+    // ---------- 5. 更新 job 状态 ----------
+    job.filenames = writtenFilenames;
+    job.archive_path = archiveDir;
     job.status = 'success';
     job.current_step = '生成完成';
     job.finished_at = new Date().toISOString();
     logger.info(
-      { projectId, files: job.filenames.length, bytes: zip.length },
+      { projectId, files: job.filenames.length, dir: archiveDir },
       '商业计划书生成完成'
     );
   } catch (err) {

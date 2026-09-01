@@ -72,7 +72,9 @@ export function useResearch(): UseResearchReturn {
         setLoading(false);
       } else if (s.execution.status === 'failed') {
         setErrorCode(s.execution.error_code ?? 'INTERNAL_ERROR');
-        setError('调研失败,请重试');
+        // 优先使用后端返回的 progress(原本就是 ProjectService.updateStatus 写入的 message);
+        // 保留 detail 让 explainError 拿到原始错误,避免只看到 “调研失败,请重试”
+        setError(s.progress || '调研失败,请重试');
         stop();
         setLoading(false);
       }

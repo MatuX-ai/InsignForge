@@ -49,6 +49,20 @@ export interface ReportSource {
   source?: string;
 }
 
+/** v1.6: 数据源贡献度(由后端 MarketResearcher 在生成报告时聚合) */
+export interface ReportContribution {
+  /** 来源原始标识,如 reddit / hackernews / google */
+  source: string;
+  /** 粗粒度分类,便于前端分组渲染 */
+  type: 'forum' | 'search' | 'social' | 'review';
+  /** 本次调研中该 source 实际落库的条数 */
+  count: number;
+  /** 该 source 的默认权重(可被环境变量覆盖) */
+  weight: number;
+  /** 0~100,加权后占比,前端可直接渲染 */
+  percentage: number;
+}
+
 /** 报告中的竞品 */
 export interface ReportCompetitor {
   name: string;
@@ -76,6 +90,8 @@ export interface MarketReport {
   risks: string[];
   opportunities: string[];
   sources: ReportSource[];
+  /** v1.6: 数据源贡献度,MarketResearcher 聚合写入;老报告无此字段时为空数组 */
+  contributions?: ReportContribution[];
   generated_at: string;
 }
 
@@ -88,7 +104,26 @@ export interface ProjectReport {
 }
 
 /** 业务错误码 - 用于前端识别特定错误类型以决定是否弹窗引导 */
-export type ErrorCode = 'MISSING_API_KEY' | 'INTERNAL_ERROR';
+/**
+ * 错误码分类:
+ *   - MISSING_API_KEY        LLM 鉴权缺失(引导用户去设置)
+ *   - INTERNAL_ERROR         兜底未知错误
+ *   - SOURCE_*               多源采集引擎 v1.3 新增的细分(对应 SourceError.kind),
+ *                            由前端映射为更友好的中文提示
+ */
+export type ErrorCode =
+  | 'MISSING_API_KEY'
+  | 'INTERNAL_ERROR'
+  | 'SOURCE_NETWORK'
+  | 'SOURCE_TIMEOUT'
+  | 'SOURCE_RATE_LIMIT'
+  | 'SOURCE_SERVER_5XX'
+  | 'SOURCE_BAD_GATEWAY'
+  | 'SOURCE_UNKNOWN_HTTP'
+  | 'SOURCE_CLIENT_4XX'
+  | 'SOURCE_PARSE'
+  | 'SOURCE_CIRCUIT_OPEN'
+  | 'SOURCE_VALIDATION';
 
 /** 执行记录 */
 export interface Execution {

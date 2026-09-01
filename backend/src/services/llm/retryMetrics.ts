@@ -52,6 +52,10 @@ interface Counter {
 
 const counters = new Map<string, Counter>();
 
+// v1.5 缓存计数器: 仅内存级别,用于 metrics 端点暴露命中率
+const cacheHitCounters = new Map<string, number>();
+const cacheMissCounters = new Map<string, number>();
+
 /** 可疑 schema 的重试率阈值,初始值,后续根据生产数据微调 */
 const STRICT_THRESHOLD = 0.3;
 
@@ -190,4 +194,58 @@ export function stopRetryMetricsTimer(): void {
 /** 仅供测试使用:检查定时器是否在运行 */
 export function _isRetryMetricsTimerActive(): boolean {
   return isTimerStarted();
+}
+
+/**
+ * v1.5 缓存指标
+ */
+export interface CacheMetrics {
+  schemaName: string;
+  hits: number;
+  misses: number;
+  /** hitRate = hits / (hits + misses),无调用时为 0 */
+  hitRate: number;
+}
+
+/**
+ * 记录一次 LLM 缓存查找结果(v1.5)
+ * 仅入内存,不接 setInterval(避免与重试率定时器耦合)
+ */
+export function recordCacheResultMetric(
+  schemaName: string,
+  kind: 'hit' | 'miss'
+): void {
+  const name = schemaName?.trim() || 'unknown';
+  if (kind === 'hit') {
+    cacheHitCounters.set(name, (cacheHitCounters.get(name) ?? 0) + 1);
+  } else {
+    cacheMissCounters.set(name, (cacheMissCounters.get(name) ?? 0) + 1);
+  }
+}
+
+/**
+ * 获取 v1.5 缓存指标快照
+ * 按 hitRate desc 排序,便于排查哪些 schema 没被缓存复用
+ */
+export function getCacheMetrics(): CacheMetrics[] {
+  const names = new Set([...cacheHitCounters.keys(), ...cacheMissCounters.keys()]);
+  const out: CacheMetrics[] = [];
+  for (const n of names) {
+    const hits = cacheHitCounters.get(n) ?? 0;
+    const misses = cacheMissCounters.get(n) ?? 0;
+    const total = hits + misses;
+    out.push({
+      schemaName: n,
+      hits,
+      misses,
+      hitRate: total === 0 ? 0 : Number((hits / total).toFixed(4)),
+    });
+  }
+  return out.sort((a, b) => b.hitRate - a.hitRate);
+}
+
+/** 清空缓存计数器(主要用于测试 / 进程级重置) */
+export function resetCacheMetrics(): void {
+  cacheHitCounters.clear();
+  cacheMissCounters.clear();
 }

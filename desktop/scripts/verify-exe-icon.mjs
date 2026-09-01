@@ -11,16 +11,41 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const exePath = path.resolve('dist/win-unpacked/InsightForge.exe');
-const refIcon = path.resolve('build/icon.png');
+// ---------- 参数解析与路径解析 ----------
+const argTarget = process.argv.find((a) => a.startsWith('--target='));
+const target = argTarget ? argTarget.split('=')[1] : 'win-unpacked';
 
-if (!fs.existsSync(exePath)) {
-  console.error(`❌ 找不到 ${exePath}`);
+function latestOf(dir, re) {
+  if (!fs.existsSync(dir)) return null;
+  const found = fs.readdirSync(dir)
+    .filter((f) => re.test(f))
+    .map((f) => ({ p: path.resolve(dir, f), m: fs.statSync(path.resolve(dir, f)).mtimeMs }))
+    .sort((a, b) => b.m - a.m);
+  return found.length ? found[0].p : null;
+}
+
+const RE_NSIS     = /^InsightForge-\d+\.\d+\.\d+-x64\.exe$/;
+const RE_PORTABLE = /^InsightForge-\d+\.\d+\.\d+-portable-x64\.exe$/;
+
+const exePath = (() => {
+  if (target === 'nsis')     return latestOf('dist', RE_NSIS);
+  if (target === 'portable') return latestOf('dist', RE_PORTABLE);
+  return path.resolve('dist/win-unpacked/InsightForge.exe');
+})();
+if (!exePath || !fs.existsSync(exePath)) {
+  console.error(`❌ 找不到 EXE (target=${target}): ${exePath ?? '(路径解析失败)'}`);
+  console.error('   请先跑 npm run build 或 npm run dist 生成产物');
+  process.exit(1);
+}
+
+const refIcon = path.resolve('build/icon.png');
+if (!fs.existsSync(refIcon)) {
+  console.error(`❌ 找不到参考图标: ${refIcon}`);
   process.exit(1);
 }
 
 const tmpDir = os.tmpdir();
-const exeIconPng = path.join(tmpDir, `exe-icon-${Date.now()}.png`);
+const exeIconPng    = path.join(tmpDir, `exe-icon-${Date.now()}.png`);
 const exeIconScaled = path.join(tmpDir, `exe-icon-scaled-${Date.now()}.png`);
 const refIconScaled = path.join(tmpDir, `ref-icon-scaled-${Date.now()}.png`);
 
@@ -118,7 +143,7 @@ fs.unlinkSync(exeIconPng);
 fs.unlinkSync(exeIconScaled);
 fs.unlinkSync(refIconScaled);
 
-console.log(`📦 exe: ${exePath}`);
+console.log(`📦 exe (target=${target}): ${exePath}`);
 console.log(`   ${fs.statSync(exePath).size} bytes, 修改于 ${fs.statSync(exePath).mtime.toISOString()}`);
 console.log(`🖼️  提取的 EXE 图标 (32x32)`);
 console.log(`🖼️  参考图标:        ${refIcon}`);
