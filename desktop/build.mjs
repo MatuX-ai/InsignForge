@@ -35,13 +35,60 @@ function run(cmd, cwd) {
   }
 }
 
+// ---------- 生成应用图标 (icon.png + icon.ico) ----------
+// ⚠️ desktop/build/ 被 .gitignore 的 '**/build/' 规则全局排除,
+//   CI 上下載下来的仓库里这个目录是空的; 而 build.mjs 第 5/7 步、
+//   electron-builder.yml 的 win.icon / nsis.installerIcon 都依赖
+//   build/icon.png + build/icon.ico, 缺一整个 desktop job 挂掉。
+//   在 build.mjs 头部一次性补齐, 保证两种环境一致:
+
+const { spawnSync: spawnSyncTop } = await import('node:child_process');
+function failTop(msg) { console.error(`\n❌ ${msg}`); process.exit(1); }
+
+// 0.1 生成 icon.png (512x512 源图)
+step('0.1/7 生成 icon.png');
+const genIconScript = path.join(DESKTOP, 'scripts', 'gen-icon.mjs');
+const iconPngPath = path.join(DESKTOP, 'build', 'icon.png');
+if (fs.existsSync(iconPngPath)) {
+  console.log('  ✅ build/icon.png 已存在,跳过生成');
+} else if (fs.existsSync(genIconScript)) {
+  console.log('  ⚠️ build/icon.png 缺失,运行 scripts/gen-icon.mjs 生成...');
+  execSync(`node "${genIconScript}"`, { stdio: 'inherit' });
+  if (!fs.existsSync(iconPngPath)) failTop(`生成失败: ${iconPngPath} 仍不存在`);
+  console.log('  ✅ build/icon.png 已生成');
+} else {
+  failTop(`找不到 gen-icon.mjs (${genIconScript}),无法生成 icon.png`);
+}
+
+// 0.2 生成 build/icon.ico (多尺寸 16~256)
+// ⚠️ 必须在 step 5/7 electron-builder 之前: electron-builder.yml 的
+//   win.icon / nsis.installerIcon / nsis.uninstallerIcon 都指向它。
+step('0.2/7 生成 build/icon.ico (多尺寸)');
+const iconIcoPath = path.join(DESKTOP, 'build', 'icon.ico');
+const distIconIcoPath = path.join(DESKTOP, 'dist', '.icon-ico', 'icon.ico');
+if (fs.existsSync(iconIcoPath)) {
+  console.log('  ✅ build/icon.ico 已存在,跳过生成');
+} else {
+  fs.mkdirSync(path.dirname(distIconIcoPath), { recursive: true });
+  const psScript = path.join(DESKTOP, 'scripts', 'make-multi-ico.ps1');
+  console.log(`  生成多尺寸 ICO: ${distIconIcoPath}`);
+  const psRun = spawnSyncTop('powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript,
+     '-PngPath', iconPngPath,
+     '-Output', distIconIcoPath],
+    { stdio: 'inherit' });
+  if (psRun.status !== 0) failTop('make-multi-ico.ps1 失败');
+  fs.copyFileSync(distIconIcoPath, iconIcoPath);
+  console.log('  ✅ build/icon.ico 已生成');
+}
+
 // ---------- 递增版本号 (仅 --dist 模式) ----------
 // 版本号规则: major.minor.PATCH
 //   - PATCH 为两位数(00~99),每次 --dist 打包 +1
 //   - 当 PATCH 越过 99 时回零,minor +1,尾数补零保持两位
 //   - 起始版本 0.1.00
 if (process.argv.includes('--dist')) {
-  step('0/6 递增版本号');
+  step('0.5/6 递增版本号');
   const pkgPath = path.join(DESKTOP, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
@@ -189,28 +236,14 @@ if (process.argv.includes('--dist')) {
 //
 // 关键: 这步必须在 electron-builder (上一步) **之后** 执行,
 //       否则 electron-builder 会用上次嵌入的旧图标覆盖.
+//
+// 注: build/icon.ico 已在 step 0.2/7 生成; 本步骤只负责生成 rcedit 专用的单尺寸 ICO + 调用 rcedit.
 step('6/7 嵌入应用图标 (仅 win-unpacked)');
 const { spawnSync } = await import('node:child_process');
 
 function fail(msg) { console.error(`\n❌ ${msg}`); process.exit(1); }
 
-// 6.1 生成多尺寸 ICO — 同时输出两份:
-//   build/icon.ico       — 供 electron-builder.yml 的 win.icon / nsis.installerIcon 用
-//   dist/.icon-ico/icon.ico — multi-size, electron-builder 读取它 (PNG-encoded 现代格式)
-const psScript = path.join(DESKTOP, 'scripts', 'make-multi-ico.ps1');
-const icoOutDist = path.join(DESKTOP, 'dist', '.icon-ico', 'icon.ico');
-const icoOutBuild = path.join(DESKTOP, 'build', 'icon.ico');
-console.log(`  生成多尺寸 ICO: ${icoOutDist}`);
-const psRun = spawnSync('powershell.exe',
-  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', psScript,
-   '-PngPath', path.join(DESKTOP, 'build', 'icon.png'),
-   '-Output', icoOutDist],
-  { stdio: 'inherit' });
-if (psRun.status !== 0) fail('make-multi-ico.ps1 失败');
-fs.mkdirSync(path.dirname(icoOutBuild), { recursive: true });
-fs.copyFileSync(icoOutDist, icoOutBuild);
-
-// 6.1.5 生成单尺寸 256x256 ICO — 专门喂给 rcedit
+// 6.1 生成单尺寸 256x256 ICO — 专门喂给 rcedit
 // ⚠️ rcedit v0.2.0 处理 multi-size PNG-encoded ICO 有 bug: 不会改主图标, 仍保留旧 Electron logo.
 // 改用单尺寸 256x256 PNG ICO 后, Windows 资源提取器 (ExtractAssociatedIcon) 能正确拿到新图标.
 // electron-builder 仍然吃 multi-size ICO (它的 winCodeSign 会正确处理).
@@ -282,7 +315,7 @@ if (!fs.existsSync(unpackedResources) || !fs.existsSync(path.join(unpackedResour
 
 console.log('\n✅ 完成');
 console.log(`  backend:   ${backendRes}`);
-console.log(`  icon.ico:  ${icoOutDist} → ${icoOutBuild}`);
+console.log(`  icon.ico:  ${iconIcoPath}`);
 if (process.argv.includes('--dist')) {
   console.log(`  安装包:    ${path.join(DESKTOP, 'dist')}`);
 }
