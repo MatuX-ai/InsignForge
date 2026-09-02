@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Textarea } from '../components/Textarea';
 import { Banner } from '../components/Banner';
-import { ResearchProgress } from '../components/ResearchProgress';
+import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { useResearch } from '../hooks/useResearch';
 import { useLocalStorage } from '../hooks/useLocalStorage';
@@ -134,11 +134,14 @@ export function Home() {
         </div>
 
         {loading && status && (
-          <ResearchProgress
+          // vNext: 用完整的走马灯 + 数据瀑布面板替代单行 ResearchProgress,
+          // 在 Home 提交后到 /report 跳转前这段时间也能感受到"AI 在工作"。
+          <ResearchLoadingPanel
             progress={status.progress}
             currentStep={status.execution.current_step}
             startedAt={status.execution.started_at}
-            className="text-helper text-text-secondary max-w-md"
+            metrics={status.execution.metrics ?? null}
+            className="max-w-md w-full"
           />
         )}
       </div>

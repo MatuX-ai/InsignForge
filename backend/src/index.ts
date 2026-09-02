@@ -19,6 +19,7 @@ import {
   stopAllSchedulers,
 } from './services/scheduler/index.js';
 import { getSessionMiddleware } from './services/auth/session.js';
+import { getDisabledSourceNotes } from './services/search/sourceWeights.js';
 
 const app = express();
 
@@ -110,6 +111,14 @@ const server = app.listen(config.PORT, () => {
     },
     `InsightForge 后端已启动 -> http://localhost:${actualPort}`
   );
+  // v1.7: 启动期主动报告「未启用骨架源」名单,便于运维一眼看到哪几个源暂未接实
+  const disabled = getDisabledSourceNotes();
+  if (disabled.length > 0) {
+    logger.warn(
+      { sources: disabled },
+      '以下数据源当前为骨架(未实装匿名抓取,接口永远返回空数组,不影响其他源)'
+    );
+  }
   // 启动所有已注册后台任务(v1.6: 通过统一注册表启动 LLM 缓存清理等)
   // 与 retryMetrics 的 lazy start 不同:这些属于 housekeeping,
   // 与是否有 LLM 调用无关,服务一启动就应该周期清理

@@ -9,8 +9,25 @@ export type ProjectStatus = 'draft' | 'analyzing' | 'completed' | 'failed';
 /** 执行状态 */
 export type ExecutionStatus = 'running' | 'success' | 'failed';
 
-/** 来源标识 */
-export type MarketNeedSource = 'reddit' | 'hackernews' | 'google' | 'bing' | 'producthunt';
+/**
+ * 来源标识
+ *
+ * v1.7 扩展: 接入中文数据源(知乎/掘金实装,微博/小红书留接入骨架)。
+ * 新增时需同步:
+ *   - frontend/src/types/index.ts (前端 MarketNeedSource 一致)
+ *   - backend/src/services/search/sourceWeights.ts (默认权重 + type)
+ *   - backend/src/services/search/Aggregator.ts (Promise.allSettled 挂接)
+ */
+export type MarketNeedSource =
+  | 'reddit'
+  | 'hackernews'
+  | 'google'
+  | 'bing'
+  | 'producthunt'
+  | 'zhihu'
+  | 'juejin'
+  | 'weibo'
+  | 'xiaohongshu';
 
 /** 调研项目 */
 export interface Project {
@@ -125,6 +142,40 @@ export type ErrorCode =
   | 'SOURCE_CIRCUIT_OPEN'
   | 'SOURCE_VALIDATION';
 
+/** 数据源单条样本(瀑布流中的一行) */
+export interface ExecutionMetricSample {
+  /** 数据源原始标识,如 reddit / hackernews / google */
+  source: MarketNeedSource | string;
+  /** 抓取到的标题或内容片段 */
+  title: string;
+  /** 来源链接(可空,爬虫/搜索引擎不一定都有) */
+  url: string | null;
+  /** 该条目的互动量(评论/点赞等) */
+  engagement: number;
+  /** 该条目进入瀑布的相对时间戳(ISO) */
+  crawled_at: string;
+}
+
+/** 数据源贡献度汇总(瀑布面板顶部统计) */
+export interface ExecutionMetricBucket {
+  source: MarketNeedSource | string;
+  /** 该源实际采集到的条数 */
+  count: number;
+  /** 最近一次更新时间 */
+  updated_at: string;
+}
+
+/**
+ * 调研过程实时指标(仅内存,不持久化):
+ *   - buckets 按源汇总已采集条数
+ *   - samples 取最近 N 条,作为"数据瀑布"展示
+ * 前端每 3s 轮询 status 时取走渲染。
+ */
+export interface ExecutionMetrics {
+  buckets: ExecutionMetricBucket[];
+  samples: ExecutionMetricSample[];
+}
+
 /** 执行记录 */
 export interface Execution {
   id: string;
@@ -137,6 +188,8 @@ export interface Execution {
   finished_at: string | null;
   /** 业务错误码(如 MISSING_API_KEY),供前端识别并弹窗 */
   error_code?: ErrorCode;
+  /** vNext: 调研过程实时指标(仅内存,进程重启即清空) */
+  metrics?: ExecutionMetrics;
 }
 
 /** API 统一响应包装 */

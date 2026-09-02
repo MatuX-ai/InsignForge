@@ -19,6 +19,11 @@ const SOURCE_ICON: Record<string, string> = {
   google: '🔍',
   bing: '🔎',
   producthunt: '🚀',
+  // v1.7 中文源:按平台主色挑 emoji;骨架源也展示避免遇到 0 条时名片错乱
+  zhihu: '🟦',
+  juejin: '🟪',
+  weibo: '🔴',
+  xiaohongshu: '📕',
 };
 
 /** 类型 → 中文 + 颜色 */

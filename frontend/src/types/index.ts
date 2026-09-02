@@ -8,8 +8,21 @@ export type ProjectStatus = 'draft' | 'analyzing' | 'completed' | 'failed';
 /** 执行状态 */
 export type ExecutionStatus = 'running' | 'success' | 'failed';
 
-/** 来源标识 */
-export type MarketNeedSource = 'reddit' | 'hackernews' | 'google' | 'bing' | 'producthunt';
+/**
+ * 来源标识(与 backend/src/types/index.ts 保持一致)
+ *
+ * v1.7 扩展: 接入中文数据源(知乎/掘金实装,微博/小红书留接入骨架)。
+ */
+export type MarketNeedSource =
+  | 'reddit'
+  | 'hackernews'
+  | 'google'
+  | 'bing'
+  | 'producthunt'
+  | 'zhihu'
+  | 'juejin'
+  | 'weibo'
+  | 'xiaohongshu';
 
 /** 调研项目 */
 export interface Project {
@@ -108,7 +121,31 @@ export interface ResearchStatus {
     finished_at: string | null;
     /** 业务错误码(如 MISSING_API_KEY),供前端决定是否弹窗引导 */
     error_code: ErrorCode | null;
+    /** vNext: 调研过程实时指标(数据瀑布) */
+    metrics: ExecutionMetrics | null;
   };
+}
+
+/** vNext: 单条瀑布样本(后端从聚合去重后的 top 100 投影而来) */
+export interface ExecutionMetricSample {
+  source: MarketNeedSource | string;
+  title: string;
+  url: string | null;
+  engagement: number;
+  crawled_at: string;
+}
+
+/** vNext: 数据源条数汇总 */
+export interface ExecutionMetricBucket {
+  source: MarketNeedSource | string;
+  count: number;
+  updated_at: string;
+}
+
+/** vNext: 调研过程实时指标 */
+export interface ExecutionMetrics {
+  buckets: ExecutionMetricBucket[];
+  samples: ExecutionMetricSample[];
 }
 
 /** 业务错误码(与后端 backend/src/types/index.ts 保持一致) */

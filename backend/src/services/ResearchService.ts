@@ -41,6 +41,10 @@ export async function triggerResearch(projectId: string): Promise<Execution> {
 
 /**
  * 真正执行调研(Phase 4 接入智能体)
+ *
+ * 第三个参数 onSamples 把本次采集到的原始样本流式写入 execution 的
+ * 内存 metrics,前端轮询 status 时能直接渲染"数据瀑布"。
+ * 失败/成功结束时都清理 metrics,避免后续轮询展示"瀑布已结束"的旧数据。
  */
 async function runResearch(
   executionId: string,
@@ -53,11 +57,25 @@ async function runResearch(
     ExecutionService.appendLog(executionId, 'info', step);
   };
 
+  // vNext: 瀑布回调。每批采集到的样本都立即落入 ExecutionService.metrics。
+  // 注意 ExecutionService.addMetricSamples 内部已做合并/截断,可重复安全调用。
+  const onSamples = (samples: Parameters<typeof ExecutionService.addMetricSamples>[1]) => {
+    try {
+      ExecutionService.addMetricSamples(executionId, samples);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err), executionId },
+        '瀑布样本写入 metrics 失败,不影响主流程'
+      );
+    }
+  };
+
   try {
-    // 调用智能体(MarketResearcher 内部已串联 关键词→采集→报告)
+    // 调用智能体 MarketResearcher 内部已串接 关键词→采集→报告
     const report = await MarketResearcher.run(
       { projectId, description },
-      stepUpdate
+      stepUpdate,
+      onSamples
     );
 
     // 保存报告
@@ -67,13 +85,15 @@ async function runResearch(
     stepUpdate('报告已生成');
     ExecutionService.markFinished(executionId, 'success');
     ProjectService.updateStatus(projectId, 'completed', '完成');
+    // 调研成功 → 清掉瀑布内存,防止已完成的报告页还展示"AI 在工作"
+    ExecutionService.clearMetrics(executionId);
     logger.info({ projectId, executionId }, '调研全部完成');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error({ err, projectId }, '调研流程失败');
     ExecutionService.appendLog(executionId, 'error', message);
     ExecutionService.markFinished(executionId, 'failed');
-    // 识别特定业务错误(仅内存),供前端弹窗 / 友好提示
+    // 识别特定业务错误(仅内存,供前端弹窗/友好提示)
     if (err instanceof MissingLlmApiKeyError) {
       ExecutionService.setErrorCode(executionId, 'MISSING_API_KEY');
     } else if (err instanceof SourceError) {
@@ -81,6 +101,8 @@ async function runResearch(
       ExecutionService.setErrorCode(executionId, sourceErrorKindToCode(err.kind));
     }
     ProjectService.updateStatus(projectId, 'failed', message);
+    // 失败也清掉 metrics:前端从 failed 状态直接进入错误卡片,不再展示瀑布
+    ExecutionService.clearMetrics(executionId);
   }
 }
 

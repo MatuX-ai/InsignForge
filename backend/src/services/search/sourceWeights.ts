@@ -1,5 +1,5 @@
 /**
- * 数据源权重与类型映射(v1.6)
+ * 数据源权重与类型映射(v1.6,v1.7 扩展中文源)
  *
  * 用途:
  *   在 MarketResearcher 生成报告时,基于本次抓取的 market_needs 按 source 分组
@@ -23,7 +23,31 @@ const DEFAULT_WEIGHTS: Record<string, { weight: number; type: ContributionType }
   google: { weight: 1.0, type: 'search' },
   bing: { weight: 0.9, type: 'search' },
   producthunt: { weight: 1.1, type: 'review' },
+  // v1.7 中文源: zhihu / juejin 为已实装;weibo / xiaohongshu 为骨架(见 DISABLED_SOURCES)
+  zhihu: { weight: 1.1, type: 'forum' },
+  juejin: { weight: 1.0, type: 'forum' },
+  weibo: { weight: 0.8, type: 'social' },
+  xiaohongshu: { weight: 0.8, type: 'social' },
 };
+
+/**
+ * v1.7骨架源名单(会变)
+ *
+ * 原因: weibo / xiaohongshu 在匿名访问下 100% 触发风控,匿名不能接;
+ * 仅作为接入骨架交付,调用 searchWeibo / searchXiaohongshu 后永远返回 []。
+ *
+ * 启用某个骨架源时(比如后续为团队版接 cookie 链路),必须:
+ *   1. 从本数组中移除该 source;
+ *   2. 同时改造对应 Client 使其走 withReliability 与 fetchWithRetry;
+ *   3. 在 DEFAULT_WEIGHTS 表中同步调整权重与 type;
+ *   4. 更新本处 sourceWeights.test 中的断言。
+ */
+export const DISABLED_SOURCES: readonly MarketNeedSource[] = ['weibo', 'xiaohongshu'];
+
+/** 给上层报告未启用骨架源对象与其类型(供 index 启动日志 / 健康检查复用) */
+export function getDisabledSourceNotes(): readonly MarketNeedSource[] {
+  return DISABLED_SOURCES;
+}
 
 /** 兜底:未在映射表里的 source */
 const FALLBACK = { weight: 1.0, type: 'search' as const };

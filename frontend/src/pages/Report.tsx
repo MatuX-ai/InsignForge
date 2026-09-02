@@ -19,7 +19,7 @@ import { Dropdown } from '../components/Dropdown';
 import { JobProgressItem } from '../components/JobProgressItem';
 import { ReportToc } from '../components/ReportToc';
 import { Tooltip } from '../components/Tooltip';
-import { ResearchProgress } from '../components/ResearchProgress';
+import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { SourceContributionCard } from '../components/SourceContributionCard';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
@@ -872,13 +872,15 @@ export function Report() {
         </div>
 
         {isAnalyzing && (
-          <Card title="调研分析中...">
-            <ResearchProgress
-              progress={status?.progress ?? '准备中...'}
-              currentStep={status?.execution.current_step ?? ''}
-              startedAt={status?.execution.started_at ?? new Date().toISOString()}
-            />
-          </Card>
+          // vNext: 走马灯 + 阶段时间线 + ETA + 数据瀑布,替代原先简化的
+          // <Card title="调研分析中..."><ResearchProgress/></Card>。
+          // 设计目标见 ResearchLoadingPanel 顶部注释。
+          <ResearchLoadingPanel
+            progress={status?.progress ?? '准备中...'}
+            currentStep={status?.execution.current_step ?? ''}
+            startedAt={status?.execution.started_at ?? new Date().toISOString()}
+            metrics={status?.execution.metrics ?? null}
+          />
         )}
 
         {/* 后台任务进度聚合 - 开发文档 / 商业计划书 */}

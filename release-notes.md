@@ -1,3 +1,76 @@
+# InsightForge v1.7.0 (中文数据源接入 · 未发版候选)
+
+## 背景
+
+v1.6 后报告页「数据来源」卡片仍只靠英文 HN / Reddit / OpenSerp 三路,调研中文产品时中文社区贡献度始终为 0。v1.7 补上中文语料,并在架构上为未来接 ProductHunt / 公开 API 预留了 "加入新源 = 3 件事" 的低门槛模板。
+
+## 新特性
+
+### 中文数据源接入
+
+「数据来源」卡片默认覆盖从 3 路扩到 7 路(由于 2 路为接入骨架,生产中实际贡献可能为 5~6 路):
+
+| Source | 类型 | 实装状态 |
+|---|---|---|
+| `zhihu` (知乎) | forum (1.1) | 实装(公开 search_v3 API) |
+| `juejin` (掘金) | forum (1.0) | 实装(公开 POST search API) |
+| `weibo` (微博) | social (0.8) | **骨架**(需要登录 cookie) |
+| `xiaohongshu` (小红书) | social (0.8) | **骨架**(需要 login + `x-s`/`x-t` 签名) |
+
+### 架构备忘
+
+- 新增数据源 Client 5 件事:
+  1. 在 `backend/src/services/search/XxxClient.ts` 复用 HackerNews 模板(`withReliability` + `fetchWithRetry` + `AbortController` + 重试退避)
+  2. 在 `backend/src/services/search/Aggregator.ts` 的 `Promise.allSettled` 数组里加一项
+  3. 在 `backend/types/index.ts` 与 `frontend/src/types/index.ts` 两端同步扩展 `MarketNeedSource` 联合
+  4. 在 `sourceWeights.ts` 的 `DEFAULT_WEIGHTS` 表里加一条默认权重与类型
+  5. 在 `frontend/src/components/SourceContributionCard.tsx` 的 `SOURCE_ICON` 里加一个 emoji(上首后为可选)
+
+### 骨架源的诚实交付
+
+微博、小红书公开接口匿名 100% 触发风控，本项目仅交付接入骨架：
+
+- `searchWeibo` / `searchXiaohongshu` 默认 return `[]`;不接入 `withReliability`,避免熔断器误计为失败
+- `sourceWeights.ts` 加 `DISABLED_SOURCES` 常量 + `getDisabledSourceNotes()` 函数
+- 后端启动时主动 `logger.warn` 报告当前未启用骨架源名单,便于运维一眼看到
+
+### 启动期日志
+
+后端启动时输出 `以下数据源当前为骨架(未实装匿名抓取,…)`,提示本项目在这些源上为骨架状态。
+
+## 体验打磨
+
+- **`SourceContributionCard` 中文源 emoji**: zhihu=🟦、juejin=🟪、weibo=🔴、xiaohongshu=📕。骨架源也展示避免遇到 0 条时名片错乱。
+- **报告页 `[数据来源]` 卡片**: 骨架源贡献为 0 时同样出现在报告卡上,用户可一眼看哪些源可用、哪些暂未接。
+
+## 工程
+
+- **新增文件**: `ZhihuClient.ts` / `JuejinClient.ts`(实装) / `WeiboClient.ts` / `XiaohongshuClient.ts`(骨架) / `sourceWeights.test.ts`(7 case → 10 case)
+- **修改文件**:
+  - `backend/src/services/search/Aggregator.ts`(7 路并发)
+  - `backend/src/types/index.ts` + `frontend/src/types/index.ts`(`MarketNeedSource` 联合 +4 项,字面一致)
+  - `backend/src/services/search/sourceWeights.ts` + 默认权重表 + `DISABLED_SOURCES`
+  - `backend/src/index.ts`(启动 warn 报告骨架名单)
+  - `backend/tests/Aggregator.test.ts`(8 case)
+  - `frontend/src/components/SourceContributionCard.tsx`(4 个 emoji)
+  - `docs/03-技术文档.md` §3.5.2(补 1 行)
+- **测试**: `sourceWeights` 7→10;`Aggregator` 8;总 22 文件 / 370 case 100% PASS,tsc --noEmit 零错。
+
+## 不在本次范围(推进记录)
+
+- **ProductHunt 接入** — 需要 OAuth client_id/secret,不在 v1.7 个人版范围;类型已在表中预留,客户端文件待创建
+- **微博/小红书 Cookie 接入** — 需要用户账号体系及合规审查,等团队版 v2.0 引入 Cookie Vault 后处理
+- **沙盒手动 smoke 脚本** — `scripts/smoke-zhihu.ts` 供本地一行验证 zihu/juejin 真实接口;未需时可不建
+
+## 核对清单
+
+- ✅ 多源采集引擎可靠性基座未受破坏(retry/breaker/cache/metrics 对新源自动生效)
+- ✅ 失败隔离实测: zhihu/juejin 报错不影响 HN/Reddit/Google 路径
+- ✅ 骨架源不计入 `circuit_opened` 指标,避免错误诊断告警
+- ✅ TypeScript / ESLint / vitest 全绿
+
+---
+
 # InsightForge v1.3.0
 
 可观测性、用户可控性、采集引擎健壮性增强同步上。

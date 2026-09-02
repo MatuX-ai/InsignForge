@@ -94,6 +94,93 @@ body::after {
   100% { transform: translateX(150%); }
 }
 
+/* ===== 调研过渡页 vNext: 走马灯横条 + 数据瀑布 ===== */
+
+/**
+ * 走马灯横条: 两段拼接实现无缝循环
+ * - outer 视口加 overflow: hidden + mask-image 形成"渐隐"边缘
+ * - track 宽度 = 200%,从 0% 滚到 -50% 后视觉上等于回到起点
+ * - duration 跟内容长度成反比,40 字/秒 看上去不催不慢
+ */
+@keyframes marquee-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.research-marquee {
+  position: relative;
+  overflow: hidden;
+  /* 边缘渐隐,让滚入/滚出的字符更柔和 */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 32px,
+    #000 calc(100% - 32px),
+    transparent 100%
+  );
+          mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 32px,
+    #000 calc(100% - 32px),
+    transparent 100%
+  );
+}
+
+.research-marquee__track {
+  display: inline-flex;
+  /* 让内容宽度翻倍,与 translateX(-50%) 对应 */
+  width: max-content;
+  animation: marquee-scroll 28s linear infinite;
+  /* hover 时暂停,方便用户看清当前"AI 思考"内容 */
+}
+.research-marquee:hover .research-marquee__track {
+  animation-play-state: paused;
+}
+.research-marquee__segment {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 3rem;
+  /* 内容之间保持间距,不靠 gap 避免被裁切 */
+}
+.research-marquee__segment + .research-marquee__segment::before {
+  content: '✦';
+  margin-right: 3rem;
+  color: rgba(148, 163, 184, 0.4);
+  font-size: 0.75rem;
+}
+
+/**
+ * 数据瀑布: 像终端/股票行情那样从下往上滚滚出
+ * - 新条目进入时先 fade + 8px 上移
+ * - 进入容器后保持正常位置
+ */
+@keyframes waterfall-rise {
+  0%   { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.waterfall-row {
+  animation: waterfall-rise 0.45s ease-out both;
+}
+
+/* 阶段时间线节点: 已完成打勾旋转入场,进行中持续脉冲 */
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+}
+.stage-pulse {
+  animation: stage-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes stage-check-pop {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.stage-check-pop {
+  animation: stage-check-pop 0.35s ease-out both;
+}
+
 /* 滚动条美化 - 深色主题 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb {

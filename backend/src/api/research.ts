@@ -53,6 +53,9 @@ researchRouter.get(
         started_at: execution.started_at,
         finished_at: execution.finished_at,
         error_code: execution.error_code ?? null,
+        // vNext: 实时返回调研过程指标,前端"数据瀑布"面板渲染用。
+        // 仅 running 期间存在;成功/失败时 ResearchService 会清空。
+        metrics: execution.metrics ?? null,
       },
     });
   })

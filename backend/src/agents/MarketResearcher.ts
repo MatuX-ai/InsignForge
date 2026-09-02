@@ -59,10 +59,19 @@ export const MarketResearcher = {
   /**
    * 全流程调研入口
    * @param onStep 每完成一步回调(用于更新项目进度)
+   * @param onSamples 每采集一批样本的回调(去重 + rerank 后,供"数据瀑布"面板)。
+   *                 不传则不入瀑布,讨论场景零开销。
    */
   async run(
     input: ResearchInput,
-    onStep?: (step: string) => void
+    onStep?: (step: string) => void,
+    onSamples?: (samples: Array<{
+      source: string;
+      title: string;
+      url: string | null;
+      engagement: number;
+      crawled_at: string;
+    }>) => void
   ): Promise<MarketReport> {
     const { projectId, description } = input;
 
@@ -96,6 +105,21 @@ export const MarketResearcher = {
     onStep?.(`正在用 ${keywords.length} 个关键词并行搜索...`);
     const insertedCount = await Aggregator.aggregateAndPersist(keywords, projectId, {
       description,
+      // 透传瀑布回调:RawItem -> ExecutionMetricSample。
+      // Aggregator 已经在 try/catch 里保护了回调,这里再加一层避免任何 sample 字段缺失导致整体崩。
+      onSamples: onSamples
+        ? (rawSamples) => {
+            const nowIso = new Date().toISOString();
+            const projected = rawSamples.map((r) => ({
+              source: r.source,
+              title: r.title ?? r.content?.slice(0, 80) ?? '(无标题)',
+              url: r.url ?? null,
+              engagement: r.engagement ?? 0,
+              crawled_at: nowIso,
+            }));
+            onSamples(projected);
+          }
+        : undefined,
     });
     logger.info({ insertedCount, projectId }, '数据采集完成');
 
