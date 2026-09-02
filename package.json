@@ -1,6 +1,6 @@
 {
   "name": "insightforge-monorepo",
-  "version": "1.3.0",
+  "version": "1.7.0",
   "private": true,
   "description": "InsightForge monorepo 根 —— 包含核心 SDK、backend、dsh 插件、frontend 等子包",
   "workspaces": [
