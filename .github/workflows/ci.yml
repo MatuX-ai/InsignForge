@@ -76,12 +76,29 @@ jobs:
     name: 桌面版构建 + 冒烟
     runs-on: windows-latest
     timeout-minutes: 30
+    # 让 electron-builder / electron 二进制下载走国内镜像(避免 GFW 拉取失败)
+    # 参考:https://www.electron.build/configuration#electron-builder-binaries-mirror
+    env:
+      ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+
+      - name: 缓存 electron-builder 依赖二进制
+        # ~AppData\Local\electron-builder\Cache 是 electron-builder 默认下载/解压
+        # nsis / winCodeSign / app-builder-bin 的缓存目录。键与 desktop/package-lock.json
+        # 绑定——依赖变更后才失效，平时 CI 走 cache 几秒完成。
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-eb-cache-${{ hashFiles('desktop/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-eb-cache-
 
       - name: 安装 workspace 依赖 (backend/frontend 构建所需)
         run: npm ci

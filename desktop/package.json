@@ -20,6 +20,10 @@
     "electron-builder": "^24.13.3"
   },
   "allowScripts": {
-    "electron@33.4.11": true
+    "electron@33.4.11": true,
+    "electron-builder@24.13.3": true,
+    "app-builder-bin@*": true,
+    "7zip-bin@*": true,
+    "@develar/*": true
   }
 }

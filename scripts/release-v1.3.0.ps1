@@ -1,4 +1,4 @@
-# scripts/release-v1.3.0.ps1
+﻿# scripts/release-v1.3.0.ps1
 # InsightForge v1.3.0 发布脚本
 # 执行前请确认:
 #   1. 工作区已切换到 main 分支且 git status 干净(全部未提交改动应为本次发布所用)
@@ -26,8 +26,12 @@ $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 if ($branch -ne 'main') { Fail "当前分支: $branch (期望 main),中止"; exit 1 }
 Done "Branch: $branch"
 
-$tagExists = (& git tag -l v1.3.0).Trim()
-if ($tagExists) { Fail "tag v1.3.0 已存在,请先删除或改用其它版本号"; exit 1 }
+# git tag -l 在 tag 不存在时返回空字符串,PowerShell 会视作 $null。
+# 避免在 $null 上调用 .Trim() 触发 InvokeMethodOnNull。
+$tagExists = (git tag -l v1.3.0 2>&1) -join ''
+if (-not [string]::IsNullOrWhiteSpace($tagExists)) {
+  Fail "tag v1.3.0 已存在,请先删除或改用其它版本号"; exit 1
+}
 Done "Tag v1.3.0 未占用"
 
 # ---------- 1. Build core ----------
