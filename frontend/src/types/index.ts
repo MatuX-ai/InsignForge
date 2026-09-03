@@ -195,7 +195,11 @@ export interface LlmStatus {
   runtimeOverride: boolean;
   /** 当前生效 provider 的 key 掩码(如 sk-****1234),用于设置页回显确认 */
   apiKeyMask: string;
-  /** 各 provider 是否已配置 key(用于指示器状态展示) */
+  /**
+   * 各 provider 是否已配置 key(后端 /api/v1/settings/llm 返回的兼容字段)
+   * 前端设置页 v1.6 调整后不再展示该面板,但保留类型以避免破坏后端响应契约;
+   * 后续若确认无外部消费者,可从 SettingsService.getLlmStatus 一并移除。
+   */
   providerKeyMap: Record<LlmProvider, boolean>;
 }
 

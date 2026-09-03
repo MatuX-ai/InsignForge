@@ -1,6 +1,6 @@
 {
   "name": "insightforge-desktop",
-  "version": "0.1.02",
+  "version": "0.1.05",
   "description": "InsightForge 桌面版 - 本地市场验证工具箱",
   "main": "main.cjs",
   "private": true,
@@ -11,8 +11,8 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "electron .",
-    "dist": "node build.mjs && electron-builder --win",
-    "pack": "node build.mjs && electron-builder --dir"
+    "dist": "node build.mjs --dist",
+    "pack": "node build.mjs"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",

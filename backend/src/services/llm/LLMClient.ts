@@ -1,11 +1,12 @@
 /**
  * LLM 客户端 - OpenAI 兼容协议
  *
- * 支持 DeepSeek / OpenAI / Ollama(本地),通过 config.LLM_PROVIDER 切换
+ * 支持的 Provider 以 providers.ts 中 LLM_PROVIDERS 为权威。
+ * 通过 config.LLM_PROVIDER / config.LLM_MODEL 切换;详细 baseUrl / 默认 model 见 providers.ts。
  *
- * - DeepSeek:  https://api.deepseek.com  (deepseek-chat)
- * - OpenAI:    https://api.openai.com    (gpt-4o-mini 等)
- * - Ollama:    http://localhost:11434   (本地模型,无需 Key)
+ * 简要清单(以实际产品列表为准):
+ * - 国产模型(OpenAI 兼容):DeepSeek / 智谱 GLM / 通义千问 / Kimi / Yi / MiniMax / 混元 / 商汤 / 阶跃星辰
+ * - 海外/本地:OpenAI / Ollama
  */
 import OpenAI from 'openai';
 import { ZodError } from 'zod';

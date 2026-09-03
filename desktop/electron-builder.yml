@@ -12,7 +12,9 @@ productName: InsightForge
 copyright: Copyright © 2026 InsightForge
 
 directories:
-  output: dist
+  # NSIS / portable 安装包统一输出到项目根 RELEASE/ 目录,
+  # 不再使用 desktop/dist/; 后端与 rcedit 嵌入脚本路径见 desktop/build.mjs。
+  output: ../RELEASE
   buildResources: build
 
 files:
@@ -21,6 +23,8 @@ files:
 
 # 运行时资源(不打入 asar, 原样放到 resources/ 下)
 extraResources:
+  - from: build/icon.png
+    to: build/icon.png
   - from: resources/backend
     to: backend
     filter:
@@ -97,6 +101,12 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: InsightForge
+  # 注入自定义 NSIS 钩子(桌面/installer.nsh).
+  # 它提供 customInstall / customUnInstall / customInit 三个钩子宏,
+  # 在文件复制收尾阶段(原本"突然跳到 100%"处)插入多步中文 DetailPrint,
+  # 让详情文字持续滚动,缓和“忽快忽慢”体惑。
+  # ⚠️ 它不能改变中段	(80MB+ File /r 复制)的 NSIS 进度条物理特性。
+  include: installer.nsh
   # 显式指定 NSIS 安装器/卸载器图标, 与 win.icon 共用同一份 build/icon.ico,
   # 避免 electron-builder 缓存 png2icons 命中带来的图标残留.
   installerIcon: build/icon.ico

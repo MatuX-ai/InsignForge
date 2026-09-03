@@ -23,7 +23,9 @@ const envSchema = z.object({
   // LLM
   // 动态枚举,与 backend/src/services/llm/providers.ts 中 LLM_PROVIDERS 一致
   LLM_PROVIDER: z.enum(ALL_LLM_PROVIDER_IDS as [LlmProviderId, ...LlmProviderId[]]).default('deepseek'),
-  LLM_MODEL: z.string().default('deepseek-chat'),
+  // 默认回退模型:必须与 providers.ts 中 deepseek 的 defaultModel 保持一致,
+  // 旧值 'deepseek-chat' 已于 2026-07-24 停用,改为当前 V4 旗舰 deepseek-v4-pro
+  LLM_MODEL: z.string().default('deepseek-v4-pro'),
   DEEPSEEK_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   // Ollama 本地模型地址(可选,也可写 OLLAMA_BASE_URL)
@@ -33,7 +35,7 @@ const envSchema = z.object({
   QWEN_API_KEY: z.string().optional(),
   MOONSHOT_API_KEY: z.string().optional(),
   YI_API_KEY: z.string().optional(),
-  // MiniMax MiniMax
+  // MiniMax MiniMax(M 系列)
   MINIMAX_API_KEY: z.string().optional(),
   // 腾讯混元
   HUNYUAN_API_KEY: z.string().optional(),

@@ -123,10 +123,9 @@ const backendRes = path.join(RESOURCES, 'backend');
 const nmDir = path.join(backendRes, 'node_modules');
 
 // 必需的运行时依赖(必须存在,否则后端启动会报 Cannot find module)
-const REQUIRED_DEPS = [
-  'express', 'cors', 'openai', 'zod',
-  'pino', 'puppeteer-core', 'better-sqlite3', 'dotenv',
-];
+const backendPackage = JSON.parse(fs.readFileSync(path.join(ROOT, 'backend', 'package.json'), 'utf8'));
+const REQUIRED_DEPS = Object.keys(backendPackage.dependencies || {})
+  .filter((name) => !name.startsWith('@types/'));
 
 // 排除的文件模式(拷贝资源时使用)
 const excludePatterns = [
@@ -141,6 +140,8 @@ fs.cpSync(path.join(ROOT, 'backend', 'package.json'), path.join(backendRes, 'pac
 const rootLock = path.join(ROOT, 'backend', 'package-lock.json');
 if (fs.existsSync(rootLock)) {
   fs.copyFileSync(rootLock, path.join(backendRes, 'package-lock.json'));
+} else {
+  fs.rmSync(path.join(backendRes, 'package-lock.json'), { force: true });
 }
 
 // 检测依赖完整性
@@ -284,9 +285,9 @@ if (!rcedit) {
   console.warn('     从 https://github.com/electron/rcedit/releases 下载并放到');
   console.warn('     desktop/resources/tools/rcedit-x64.exe 后重新构建');
 } else {
-  // 只 rcedit win-unpacked/InsightForge.exe. NSIS / portable 由 electron-builder
+  // 只 rcedit RELEASE/win-unpacked/InsightForge.exe. NSIS / portable 由 electron-builder
   // 通过 nsis.installerIcon/nsis.uninstallerIcon 配置嵌入 MUI 图标 (不动 PE).
-  const targets = [path.join(DESKTOP, 'dist', 'win-unpacked', 'InsightForge.exe')]
+  const targets = [path.join(DESKTOP, '..', 'RELEASE', 'win-unpacked', 'InsightForge.exe')]
     .filter((p) => fs.existsSync(p));
   if (targets.length === 0) {
     console.warn('  ⚠️ win-unpacked/InsightForge.exe 不存在, 跳过嵌入步骤');
@@ -306,16 +307,34 @@ if (!rcedit) {
 // ---------- 收尾 ----------
 step('7/7 收尾');
 // 校验安装包内 backend 资源齐全 (signAndEditExecutable:false 可能影响 extraResources)
-const unpackedResources = path.join(DESKTOP, 'dist', 'win-unpacked', 'resources');
+const unpackedResources = path.join(DESKTOP, '..', 'RELEASE', 'win-unpacked', 'resources');
 if (!fs.existsSync(unpackedResources) || !fs.existsSync(path.join(unpackedResources, 'backend'))) {
   console.warn(`  ⚠️ ${unpackedResources}/backend 缺失, 请检查 electron-builder.yml extraResources.filter`);
 } else {
   console.log('  ✅ win-unpacked/resources/backend 已就绪');
 }
 
+// --dist 模式: 同步发布辅助文件到 RELEASE/  , 引导用户选 portable / NSIS / 刷新图标
+if (process.argv.includes('--dist')) {
+  const releaseDir = path.join(DESKTOP, '..', 'RELEASE');
+  const extraFiles = [
+    { src: path.join(DESKTOP, 'release-readme.txt'), name: 'README.txt', msg: '引导选 portable' },
+    { src: path.join(DESKTOP, 'scripts', 'refresh-taskbar-icon.ps1'),
+      name: 'refresh-taskbar-icon.ps1', msg: '刷新 Windows 任务栏图标' },
+  ];
+  for (const f of extraFiles) {
+    if (fs.existsSync(f.src)) {
+      fs.copyFileSync(f.src, path.join(releaseDir, f.name));
+      console.log(`  ✅ 已复制 ${path.basename(f.src)} → RELEASE/${f.name} (${f.msg})`);
+    } else {
+      console.warn(`  ⚠️ 未找到 ${f.src}, 跳过`);
+    }
+  }
+}
+
 console.log('\n✅ 完成');
 console.log(`  backend:   ${backendRes}`);
 console.log(`  icon.ico:  ${iconIcoPath}`);
 if (process.argv.includes('--dist')) {
-  console.log(`  安装包:    ${path.join(DESKTOP, 'dist')}`);
+  console.log(`  安装包:    ${path.join(DESKTOP, '..', 'RELEASE')}`);
 }

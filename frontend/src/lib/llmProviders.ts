@@ -5,7 +5,6 @@
  * 用于:
  * - Settings 页 Provider 下拉选项
  * - OnboardingModal 首次启动 Provider 选择
- * - "Provider 配置状态"面板
  * - "去获取 API Key →" 提示链接
  *
  * 注意:前端这份元数据用于纯展示,不参与 LLM 请求。请求配置完全由后端
@@ -17,14 +16,14 @@ export type LlmProviderId =
   | 'openai'
   | 'ollama'
   // 国产大模型(OpenAI 兼容协议)
-  | 'zhipu'      // 智谱 BigModel / GLM-4
+  | 'zhipu'      // 智谱 BigModel / GLM-5
   | 'qwen'       // 通义千问 DashScope
   | 'moonshot'   // 月之暗面 Kimi
   | 'yi'         // 零一万物
   | 'MiniMax'      // MiniMax MiniMax
   | 'hunyuan'    // 腾讯混元
-  | 'sensenova'  // 商汤日日新
-  | 'stepfun';   // 阶跃星辰
+  | 'sensenova'  // 商汤日日新 V6
+  | 'stepfun';   // 阶跃星辰 Step-2
 
 export interface LlmProviderMeta {
   id: LlmProviderId;
@@ -52,129 +51,160 @@ export const LLM_PROVIDERS: readonly LlmProviderMeta[] = [
     description: '中文友好、长上下文、性价比高',
     requiresKey: true,
     keyUrl: 'https://platform.deepseek.com/api_keys',
-    suggestedModels: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-coder', 'deepseek-v3'],
-    defaultModel: 'deepseek-chat',
+    suggestedModels: [
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp',
+    ],
+    defaultModel: 'deepseek-v4-pro',
   },
   {
     id: 'zhipu',
     label: '智谱 GLM',
     brand: 'Zhipu BigModel',
-    description: '清华系 GLM-4 系列,中文对话与推理表现优秀',
+    description: '清华系 GLM-5 旗舰,编程能力对齐 Claude Opus 4.5',
     requiresKey: true,
     keyUrl: 'https://bigmodel.cn/usercenter/proj-key',
-    suggestedModels: ['glm-4-flash', 'glm-4-air', 'glm-4-airx', 'glm-4', 'glm-4-plus'],
-    defaultModel: 'glm-4-flash',
+    suggestedModels: [
+      'glm-5',
+      'glm-5.1',
+      'glm-5.2',
+      'glm-4.7-flash',
+      'glm-z1',
+    ],
+    defaultModel: 'glm-5',
   },
   {
     id: 'qwen',
     label: '通义千问',
     brand: 'Qwen DashScope',
-    description: '阿里云 DashScope,多尺寸模型(7B/72B)可选',
+    description: '阿里云 DashScope,Qwen3.8 旗舰,262K 上下文',
     requiresKey: true,
     keyUrl: 'https://dashscope.console.aliyun.com/apiKey',
     suggestedModels: [
-      'qwen-turbo',
-      'qwen-plus',
-      'qwen-max',
-      'qwen-long',
-      'qwen2.5-72b-instruct',
+      'qwen3.8-max',
+      'qwen3.8-flash',
+      'qwen3.7-max',
+      'qwen3.7-plus',
+      'qwen3.7-flash',
     ],
-    defaultModel: 'qwen-turbo',
+    defaultModel: 'qwen3.8-max',
   },
   {
     id: 'moonshot',
     label: 'Kimi (月之暗面)',
     brand: 'Moonshot',
-    description: '200K 超长上下文,适合文档/报告类任务',
+    description: 'Kimi K3 旗舰 1M 上下文,适合报告/长文档生成',
     requiresKey: true,
     keyUrl: 'https://platform.moonshot.cn/console/api-keys',
     suggestedModels: [
-      'moonshot-v1-8k',
-      'moonshot-v1-32k',
-      'moonshot-v1-128k',
-      'kimi-k2-0711-preview',
+      'kimi-k3',
+      'kimi-k2.7-code',
+      'kimi-k2.7-code-highspeed',
+      'kimi-k2.6',
     ],
-    defaultModel: 'moonshot-v1-8k',
+    defaultModel: 'kimi-k3',
   },
   {
     id: 'yi',
     label: '零一万物 Yi',
     brand: 'Lingyiwanwu',
-    description: '李开复旗下,大参数开源闭源双线产品',
+    description: '李开复旗下 Yi 系列,Yi-Large 千亿参数旗舰',
     requiresKey: true,
     keyUrl: 'https://platform.lingyiwanwu.com/apikeys',
-    suggestedModels: ['yi-large', 'yi-medium', 'yi-spark', 'yi-large-rag', 'yi-large-turbo'],
+    suggestedModels: [
+      'yi-large',
+      'yi-large-rag',
+      'yi-large-turbo',
+      'yi-medium',
+      'yi-spark',
+    ],
     defaultModel: 'yi-large',
   },
   {
     id: 'MiniMax',
-    label: 'MiniMax MiniMax',
-    brand: 'MiniMax',
-    description: 'MiniMax,不区分文本/多模态,SOTA 中文质量',
+    label: 'MiniMax',
+    brand: undefined,
+    description: 'MiniMax M 系列,中文质量 SOTA,适合报告类长文本生成',
     requiresKey: true,
-    keyUrl: 'https://platform.MiniMax.io/user-center/basic-information/interface-key',
+    keyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
+    // 与 backend/src/services/llm/providers.ts 中 MiniMax 保持一致
+    // 来源:platform.minimaxi.com/docs/api-reference/api-overview(2026-08 拉取)
     suggestedModels: [
-      'MiniMax-Text-01',
-      'MiniMax-Text-01-240628',
-      'abab6.5s-chat',
-      'abab6.5-chat',
+      'MiniMax-M2',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M3',
     ],
-    defaultModel: 'MiniMax-Text-01',
+    defaultModel: 'MiniMax-M2',
   },
   {
     id: 'hunyuan',
     label: '腾讯混元',
     brand: 'Tencent Hunyuan',
-    description: '腾讯云全栈参规模,256K 长上下文选项',
+    description: '腾讯 TurboS 最新一代 MOE 旗舰,32K 上下文',
     requiresKey: true,
     keyUrl: 'https://console.cloud.tencent.com/hunyuan/api-key',
     suggestedModels: [
-      'hunyuan-standard',
-      'hunyuan-standard-256K',
-      'hunyuan-pro',
-      'hunyuan-turbo',
-      'hunyuan-turbos',
-      'hunyuan-code',
+      'hunyuan-turbos-latest',
+      'hunyuan-2.0-thinking',
+      'hunyuan-t1',
     ],
-    defaultModel: 'hunyuan-standard',
+    defaultModel: 'hunyuan-turbos-latest',
   },
   {
     id: 'sensenova',
     label: '商汤日日新',
     brand: 'SenseTime SenseChat',
-    description: '商汤大装置 SenseChat,多场景角色选项',
+    description: '商汤 V6 多模态旗舰 6200 亿参数,原生多模态架构',
     requiresKey: true,
     keyUrl: 'https://platform.sensenova.cn/docManage',
-    suggestedModels: ['SenseChat-5', 'SenseChat-5-Coder', 'SenseChat-Character', 'SenseChat-Vision'],
-    defaultModel: 'SenseChat-5',
+    suggestedModels: [
+      'sensenova-v6-pro',
+      'sensenova-v6-reasoner',
+      'sensenova-v6-omni',
+      'sensenova-6.8-flash-lite',
+    ],
+    defaultModel: 'sensenova-v6-pro',
   },
   {
     id: 'stepfun',
     label: '阶跃星辰',
     brand: 'StepFun',
-    description: '阶越星辰 Step-1/Step-2,128K 长上下文',
+    description: 'Step-2 万亿参数 MoE 旗舰,单一端点支持文本/图像/音/视频',
     requiresKey: true,
     keyUrl: 'https://platform.stepfun.ai/',
     suggestedModels: [
-      'step-1v-8k',
-      'step-1v-32k',
-      'step-1v-128k',
-      'step-1-8k',
-      'step-1-32k',
+      'step-2',
       'step-2-mini',
+      'step-r',
+      'step-1',
+      'step-1.5v',
+      'step-cc',
     ],
-    defaultModel: 'step-1v-8k',
+    defaultModel: 'step-2',
   },
   // ---- 国际/本地 Provider ----
   {
     id: 'openai',
     label: 'OpenAI',
-    brand: 'GPT-4o',
-    description: '海外直连,需要海外网络环境',
+    brand: 'GPT-5',
+    description: '海外直连,GPT-5 旗舰,需要海外网络环境',
     requiresKey: true,
     keyUrl: 'https://platform.openai.com/api-keys',
-    suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-    defaultModel: 'gpt-4o-mini',
+    suggestedModels: [
+      'gpt-5',
+      'gpt-5.1',
+      'gpt-5-mini',
+      'gpt-5-nano',
+      'o3',
+      'o4-mini',
+    ],
+    defaultModel: 'gpt-5',
   },
   {
     id: 'ollama',
@@ -182,7 +212,15 @@ export const LLM_PROVIDERS: readonly LlmProviderMeta[] = [
     brand: '本地部署',
     description: '本地无需 Key,需先启动 Ollama 服务',
     requiresKey: false,
-    suggestedModels: ['llama3.1', 'qwen2', 'deepseek-r1', 'mistral'],
+    suggestedModels: [
+      'llama3.1',
+      'qwen3',
+      'qwen2.5',
+      'deepseek-r1',
+      'gemma3',
+      'mistral',
+      'phi4',
+    ],
     defaultModel: 'llama3.1',
   },
 ] as const;
@@ -202,7 +240,7 @@ export function getLlmProvider(id: string): LlmProviderMeta | undefined {
 /** 所有 provider id 列表(供下拉渲染用) */
 export const ALL_LLM_PROVIDER_IDS = LLM_PROVIDERS.map((p) => p.id) as LlmProviderId[];
 
-/** 给定 id 拿出默认 model;id 不在前端注册表时回退到 deepseek-chat(防误输入兜底) */
+/** 给定 id 拿出默认 model;id 不在前端注册表时回退到 deepseek 的当前旗舰 deepseek-v4-pro */
 export function defaultModelFor(id: string): string {
-  return getLlmProvider(id)?.defaultModel ?? 'deepseek-chat';
+  return getLlmProvider(id)?.defaultModel ?? 'deepseek-v4-pro';
 }
