@@ -28,6 +28,35 @@ const DEFAULT: AppSettings = {
   showApiKey: false,
 };
 
+/**
+ * 免配置冷启动默认会调用的内置搜索源(v1.7)
+ *
+ * 与 backend/src/services/search/Aggregator.ts 中实际调用的 searchXxx 一致。
+ * 微博/小红书为骨架源,匿名下 100% 风控,此处不展示避免误导用户。
+ *
+ * 图标实现:
+ *   - 不引入额外静态资源;用 inline monogram徽标表达品牌。
+ *   - 每个 Logo 是 平台官方品牌色背景 + 品牌标识字符(G/Y/R/知/J)的圆角小方块。
+ *   - 品牌色选自各平台公开主色;改色请同步 docs/02-前端设计文档.md。
+ */
+const BUILTIN_SEARCH_SOURCES: ReadonlyArray<{
+  id: string;
+  label: string;
+  /** 单字符徽标文字(HN 用 Y、知乎用 知、掘金用 J 是平台官方 logo 的核心标识) */
+  logoText: string;
+  /** 平台官方主色,直接作为徽标背景 */
+  logoBg: string;
+  /** 徽标文字颜色;与背景对比度需达到 WCAG AA(2个深色品牌需用白字) */
+  logoFg: string;
+  typeLabel: string;
+}> = [
+  { id: 'google',     label: 'Google',      logoText: 'G', logoBg: '#4285F4', logoFg: '#FFFFFF', typeLabel: '搜索' },
+  { id: 'hackernews', label: 'Hacker News', logoText: 'Y', logoBg: '#FF6600', logoFg: '#FFFFFF', typeLabel: '论坛' },
+  { id: 'reddit',     label: 'Reddit',      logoText: 'R', logoBg: '#FF4500', logoFg: '#FFFFFF', typeLabel: '社交' },
+  { id: 'zhihu',      label: '知乎',        logoText: '知', logoBg: '#0084FF', logoFg: '#FFFFFF', typeLabel: '论坛' },
+  { id: 'juejin',     label: '掘金',        logoText: 'J', logoBg: '#1E80FF', logoFg: '#FFFFFF', typeLabel: '论坛' },
+];
+
 export function Settings() {
   const [settings, setSettings] = useLocalStorage<AppSettings>('settings', DEFAULT);
   const [apiKey, setApiKey] = useLocalStorage<string>('llm_api_key', '');
@@ -111,20 +140,39 @@ export function Settings() {
     setSaveError(null);
     setSaved(false);
     try {
-      // 仅在用户填了 key 时才上报到后端(避免空字符串误覆盖)
+      // 1) 同步 provider/model 到后端,保证【当前生效配置】与表单一致
+      //    (仅当与后端现有值不同才调用,避免无谓请求)
+      const backendProvider = llmStatus?.provider;
+      const backendModel = llmStatus?.model;
+      if (
+        !llmStatus ||
+        settings.llmProvider !== backendProvider ||
+        settings.llmModel !== backendModel
+      ) {
+        const cfgRes = await api.updateLlmConfig({
+          provider: settings.llmProvider,
+          model: settings.llmModel,
+        });
+        if (!cfgRes.ok) throw new Error(cfgRes.message ?? 'LLM 配置保存失败');
+      }
+
+      // 2) 仅在用户填了 key 时才上报到后端(避免空字符串误覆盖)
       if (apiKey.trim().length > 0) {
         const res = await api.updateLlmApiKey(apiKey.trim());
         if (!res.ok) throw new Error(res.message ?? '保存失败');
-        // 重新拉取后端状态
-        const s = await api.getLlmStatus();
-        setLlmStatus(s);
       }
-      // 搜索配置(provider + SerpAPI Key):始终同步,让"更精准数据"的配置真实生效
+
+      // 3) 重新拉取后端状态,让【当前生效配置】反映最新保存结果
+      const s = await api.getLlmStatus();
+      setLlmStatus(s);
+
+      // 4) 搜索配置(provider + SerpAPI Key):始终同步,让"更精准数据"的配置真实生效
       const searchRes = await api.updateSearchConfig({
         provider: settings.searchProvider,
         apiKey: serpApiKey.trim(),
       });
       if (!searchRes.ok) throw new Error(searchRes.message ?? '搜索配置保存失败');
+
       // 保存成功后更新快照,isDirty 随即恢复为 false
       setSavedSnapshot({ settings, apiKey, serpApiKey });
       setSaved(true);
@@ -306,9 +354,12 @@ export function Settings() {
             })()}
           </div>
 
-          {!loadingStatus && llmStatus && (
+          {!loadingStatus && llmStatus && (llmStatus.hasApiKey || !getLlmProvider(llmStatus.provider)?.requiresKey) && (
             <>
-              {/* 当前生效配置 */}
+              {/* 当前生效配置:展示后端实际生效的 provider/model/baseUrl/key 快照,
+                  用户在上方填表 + 点击保存后,这里会立即反映新值。
+                  未配置 API Key 且当前 Provider 需要 Key 时整张卡片隐藏,
+                  避免出现"半个生效配置"的误导。 */}
               <div className="rounded-lg border border-border bg-card-solid/40 p-4 space-y-1.5">
                 <div className="text-helper text-text-secondary font-medium mb-2">
                   当前生效配置
@@ -346,36 +397,15 @@ export function Settings() {
                         return '本地无需 Key';
                       }
                       if (llmStatus.hasApiKey) return llmStatus.apiKeyMask;
-                      return '未配置';
+                      // 未配置 key 时给出可执行的引导,而不是干巴巴的"未配置"
+                      return (
+                        <span className="text-warning">
+                          未配置,请在上方填写后保存
+                        </span>
+                      );
                     })()}
                   </span>
                 </div>
-              </div>
-
-              {/* 各 Provider 配置状态(由前端 LLM_PROVIDERS 注册表驱动) */}
-              <div className="rounded-lg border border-border bg-card-solid/40 p-4 space-y-1.5">
-                <div className="text-helper text-text-secondary font-medium mb-2">
-                  Provider 配置状态
-                </div>
-                {LLM_PROVIDERS.map((p) => (
-                  <div key={p.id} className="flex justify-between gap-4">
-                    <span className="text-helper text-text-secondary">
-                      {p.label}
-                      {p.brand ? (
-                        <span className="ml-1 text-text-tertiary">· {p.brand}</span>
-                      ) : null}
-                    </span>
-                    <span className="text-helper">
-                      {!p.requiresKey ? (
-                        <span className="text-text-secondary">本地无需 Key</span>
-                      ) : llmStatus.providerKeyMap[p.id] ? (
-                        <span className="text-success">✅ 已配置</span>
-                      ) : (
-                        <span className="text-warning">未配置</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
               </div>
             </>
           )}
@@ -409,6 +439,35 @@ export function Settings() {
                 OpenSerp
               </code>
               服务后选择对应 Provider。
+            </div>
+
+            {/* 免配置可用搜索源:品牌色 monogram 徽标一排展示
+                不用 emoji/抽象色块,以官方品牌色 + 单字符表达 Logo。
+                Logo 本身是一个小尺寸的圆角方块(类似浏览器收藏夹 favicon), */}
+            <div>
+              <div className="text-helper text-text-secondary mb-2">
+                开箱即用的内置搜索源
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {BUILTIN_SEARCH_SOURCES.map((src) => (
+                  <div
+                    key={src.id}
+                    title={`${src.label} · ${src.typeLabel} · 免配置可用`}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card-solid/30 text-helper"
+                  >
+                    {/* 品牌色 monogram 徽标:平台官方主色背景 + 品牌标识字符 */}
+                    <span
+                      aria-hidden
+                      className="inline-flex items-center justify-center w-5 h-5 rounded font-bold leading-none"
+                      style={{ background: src.logoBg, color: src.logoFg, fontSize: src.logoText.length > 1 ? 9 : 11 }}
+                    >
+                      {src.logoText}
+                    </span>
+                    <span className="text-text-primary font-medium">{src.label}</span>
+                    <span className="text-text-secondary">{src.typeLabel}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div>
