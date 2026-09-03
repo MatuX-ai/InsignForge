@@ -20,9 +20,11 @@ import {
 } from '../lib/llmProviders';
 import type { AppSettings, LlmProvider, LlmStatus } from '../types';
 
+// 与后端 providers.ts 中 deepseek 的 defaultModel 保持一致;
+// 旧值 'deepseek-chat' 已于 2026-07-24 停用
 const DEFAULT: AppSettings = {
   llmProvider: 'deepseek',
-  llmModel: 'deepseek-chat',
+  llmModel: 'deepseek-v4-pro',
   searchProvider: 'openserp',
   searchUrl: 'http://localhost:8080',
   showApiKey: false,
@@ -34,27 +36,36 @@ const DEFAULT: AppSettings = {
  * 与 backend/src/services/search/Aggregator.ts 中实际调用的 searchXxx 一致。
  * 微博/小红书为骨架源,匿名下 100% 风控,此处不展示避免误导用户。
  *
+ * AI 助理是另外一层的搜索能力——讨论 AI 会自主调用
+ *   @insightforge/mcp-server 暴露的 market_research / search_demand /
+ *   competitor_analysis 工具(后端 DiscussionResearch.ts),即使上方 5 个
+ *   外部源全部不可达, AI 助理也能基于内置示例数据给出回答。
+ *
  * 图标实现:
  *   - 不引入额外静态资源;用 inline monogram徽标表达品牌。
- *   - 每个 Logo 是 平台官方品牌色背景 + 品牌标识字符(G/Y/R/知/J)的圆角小方块。
+ *   - 每个 Logo 是 平台官方品牌色背景 + 品牌标识字符(G/Y/R/知/J/AI)的圆角小方块。
  *   - 品牌色选自各平台公开主色;改色请同步 docs/02-前端设计文档.md。
  */
 const BUILTIN_SEARCH_SOURCES: ReadonlyArray<{
   id: string;
   label: string;
-  /** 单字符徽标文字(HN 用 Y、知乎用 知、掘金用 J 是平台官方 logo 的核心标识) */
+  /** 单字符徽标文字(HN 用 Y、知乎用 知、掘金用 J、AI 助理用 AI) */
   logoText: string;
   /** 平台官方主色,直接作为徽标背景 */
   logoBg: string;
   /** 徽标文字颜色;与背景对比度需达到 WCAG AA(2个深色品牌需用白字) */
   logoFg: string;
   typeLabel: string;
+  /** AI 助理是语义级检索,与外部源不同层;标记后用虚线边框表达差异 */
+  aiAgent?: boolean;
 }> = [
-  { id: 'google',     label: 'Google',      logoText: 'G', logoBg: '#4285F4', logoFg: '#FFFFFF', typeLabel: '搜索' },
-  { id: 'hackernews', label: 'Hacker News', logoText: 'Y', logoBg: '#FF6600', logoFg: '#FFFFFF', typeLabel: '论坛' },
-  { id: 'reddit',     label: 'Reddit',      logoText: 'R', logoBg: '#FF4500', logoFg: '#FFFFFF', typeLabel: '社交' },
+  { id: 'google',     label: 'Google',      logoText: 'G',  logoBg: '#4285F4', logoFg: '#FFFFFF', typeLabel: '搜索' },
+  { id: 'hackernews', label: 'Hacker News', logoText: 'Y',  logoBg: '#FF6600', logoFg: '#FFFFFF', typeLabel: '论坛' },
+  { id: 'reddit',     label: 'Reddit',      logoText: 'R',  logoBg: '#FF4500', logoFg: '#FFFFFF', typeLabel: '社交' },
   { id: 'zhihu',      label: '知乎',        logoText: '知', logoBg: '#0084FF', logoFg: '#FFFFFF', typeLabel: '论坛' },
-  { id: 'juejin',     label: '掘金',        logoText: 'J', logoBg: '#1E80FF', logoFg: '#FFFFFF', typeLabel: '论坛' },
+  { id: 'juejin',     label: '掘金',        logoText: 'J',  logoBg: '#1E80FF', logoFg: '#FFFFFF', typeLabel: '论坛' },
+  // AI 助理自身是一个"语义检索"渠道,讨论梳理时会自主调用 MCP 工具
+  { id: 'ai-agent',   label: 'AI 助理',     logoText: 'AI', logoBg: '#8B5CF6', logoFg: '#FFFFFF', typeLabel: '智能体', aiAgent: true },
 ];
 
 export function Settings() {
@@ -452,8 +463,18 @@ export function Settings() {
                 {BUILTIN_SEARCH_SOURCES.map((src) => (
                   <div
                     key={src.id}
-                    title={`${src.label} · ${src.typeLabel} · 免配置可用`}
-                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card-solid/30 text-helper"
+                    title={
+                      src.aiAgent
+                        ? `${src.label} · ${src.typeLabel} · 讨论 AI 会自主调用 MCP 工具检索,免配置可用`
+                        : `${src.label} · ${src.typeLabel} · 免配置可用`
+                    }
+                    className={
+                      src.aiAgent
+                        // AI 助理是"语义检索"层,用紫色实线边框 + 紫色徽标表达身份,
+                        // 不用虚线框(会让用户误以为未启用)
+                        ? 'flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-violet-500/50 bg-card-solid/30 text-helper'
+                        : 'flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-border bg-card-solid/30 text-helper'
+                    }
                   >
                     {/* 品牌色 monogram 徽标:平台官方主色背景 + 品牌标识字符 */}
                     <span
