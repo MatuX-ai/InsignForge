@@ -99,6 +99,12 @@ patch_bs.cjs
 desktop/dist/
 desktop/win-unpacked/
 desktop/verify-out.txt
+# NSIS 编译调试日志 (主走马灯调试的临时输出)
+desktop/makensis-stdout.txt
+desktop/makensis-stderr.txt
+# 构建调试期生成的临时脚本与文档
+desktop/clean-temp-dists.ps1
+desktop/release-readme.txt
 
 # ---------- 历史归档(不入库) ----------
 历史文档/**/*.zip
