@@ -62,8 +62,26 @@ extraResources:
       - "!**/node_modules/.package-lock.json"
       - "!**/node_modules/.cache/**"
       - "!**/node_modules/.bin/*.cmd"
+      # ---- 源码/文档型排除(所有运行时都走 dist/lib/out/v3/v4 等已编译目录) ----
+      # puppeteer-core/src (~1.21 MB TypeScript 源码) / openai/src (~1.13 MB) /
+      # zod/src (~0.80 MB) / 其他依赖里的 src 目录都是给开发者读的,运行时不用。
+      - "!**/src/**"
+      # devtools-protocol/json (~1.53 MB Chromium DevTools 协议 JSON 定义) + pdl (~0.60 MB),
+      # 仅类型生成器需要,运行时只读 .d.ts,不含可执行代码。
+      - "!**/json/**"
+      - "!**/pdl/**"
   - from: resources/frontend-dist
     to: frontend-dist
+    filter:
+      # --- 白名单: 包含所有文件 ---
+      - "**/*"
+      # --- 黑名单: Vite 默认产出的 source map 与无意义文件 ---
+      # 之前漏了这里,index-*.js.map (~1.24 MB) 直接被装进安装包;
+      # 用最小白名单 + 强黑名单(与 backend 那条一致)消除体腔。
+      - "!**/*.map"
+      - "!**/*.md"
+      - "!**/README*"
+      - "!**/CHANGELOG*"
 
 # 顶层 compression: 控制 asar 压缩等级(仅当启用 asar 时生效;
 # 本项目 main.cjs 是文件模式不打 asar,因此实际减小靠的是:

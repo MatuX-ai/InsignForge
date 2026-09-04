@@ -86,6 +86,9 @@ crawler/screenshots/
 # ---------- 项目级特殊文件 ----------
 workflow/
 
+# 桌面版安装包与发布产物(走 GitHub Releases,不进 git 树)
+RELEASE/
+
 # ---------- monorepo 顶层 ----------
 # packages/* 子目录的构建产物已由 **/dist/ 覆盖,这里仅补充
 packages/*/coverage/
