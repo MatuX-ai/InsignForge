@@ -100,11 +100,23 @@ body::after {
  * 走马灯横条: 两段拼接实现无缝循环
  * - outer 视口加 overflow: hidden + mask-image 形成"渐隐"边缘
  * - track 宽度 = 200%,从 0% 滚到 -50% 后视觉上等于回到起点
- * - duration 跟内容长度成反比,40 字/秒 看上去不催不慢
+ * - duration 缩短到 14s: 28s 太慢,人眼几乎察觉不到移动;
+ *   14s 让 50% 滚动在合理窗口内完成,且每秒位移 >= 25px,
+ *   文本"在走"的视觉反馈才够明显
  */
 @keyframes marquee-scroll {
   0%   { transform: translateX(0); }
   100% { transform: translateX(-50%); }
+}
+
+/**
+ * 走马灯光带扫过: 不依赖 transform,在容器里加一层 ::before
+ * 做 -100% → 200% 的扫光,给"AI 在认真想"的视觉线索。
+ * 即使 prefers-reduced-motion 关掉了位移,这个光带还是保留(透明度低,无障碍友好)。
+ */
+@keyframes marquee-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
 }
 
 .research-marquee {
@@ -127,14 +139,41 @@ body::after {
   );
 }
 
+/* 光带层:用 ::before 而不是额外 DOM,减少 React 树复杂度 */
+.research-marquee::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(129, 140, 248, 0.10) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  animation: marquee-shimmer 3.5s linear infinite;
+  z-index: 1;
+}
+/* 内容必须盖在光带之上 */
+.research-marquee__track {
+  position: relative;
+  z-index: 0;
+}
+
 .research-marquee__track {
   display: inline-flex;
   /* 让内容宽度翻倍,与 translateX(-50%) 对应 */
   width: max-content;
-  animation: marquee-scroll 28s linear infinite;
+  animation: marquee-scroll 14s linear infinite;
   /* hover 时暂停,方便用户看清当前"AI 思考"内容 */
 }
 .research-marquee:hover .research-marquee__track {
+  animation-play-state: paused;
+}
+.research-marquee:hover::before {
   animation-play-state: paused;
 }
 .research-marquee__segment {
@@ -179,6 +218,22 @@ body::after {
 }
 .stage-check-pop {
   animation: stage-check-pop 0.35s ease-out both;
+}
+
+/* 无障碍: 用户系统开了"减少动效"时,保留位移但去掉反复脉冲,
+ * 把 transform-only 的走马灯退化为"按时间走",不再叠加 mask/光带
+ * 高频动画。duration 与基础规则保持一致(不降速),否则过渡页
+ * 看上去像"卡住"。 */
+@media (prefers-reduced-motion: reduce) {
+  .research-marquee__track {
+    animation: none;
+  }
+  .research-marquee::before {
+    display: none;
+  }
+  .stage-pulse {
+    animation: none;
+  }
 }
 
 /* 滚动条美化 - 深色主题 */
