@@ -101,6 +101,13 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: InsightForge
+  # 关闭 -WX (NSIS warnings as errors): installer.nsh 在 generated .nsi
+  # 顶部被 include, 位于 assistedInstaller.nsh 之前, 引用
+  # $mui.InstFilesPage.ProgressBar 必然触发 warning 6000
+  # "unknown variable/constant ... detected, ignoring".
+  # 运行时这些变量已被 MUI2 + assistedInstaller.nsh 赋值, Function 运行正常.
+  # 关 -WX 是允许 warning 继续编译的唯一解法 (见 installer.nsh 顶部说明).
+  warningsAsErrors: false
   # 注入自定义 NSIS 钩子(桌面/installer.nsh).
   # 它提供 customInstall / customUnInstall / customInit 三个钩子宏,
   # 在文件复制收尾阶段(原本"突然跳到 100%"处)插入多步中文 DetailPrint,
