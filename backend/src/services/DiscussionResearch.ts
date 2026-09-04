@@ -89,17 +89,30 @@ function formatAggregated(
   return `针对「${idea}」检索到的公开市场数据(共 ${items.length} 条,展示前 40 条):\n\n${lines.join('\n\n')}`;
 }
 
+/** 步骤回调: 在 MCP/直连工具的耗时阶段汇报,供前端 current_step 展示 */
+export type StepReporter = (step: string) => void;
+
 /** 直连通道: 关键词提取 → 多源聚合 → 文本化;无任何数据时返回 null(由上层兜底) */
-async function directMarketResearch(idea: string): Promise<string | null> {
+async function directMarketResearch(
+  idea: string,
+  onStep?: StepReporter
+): Promise<string | null> {
+  onStep?.('正在提取调研关键词...');
   const kw = await MarketResearcher.extractKeywords(idea);
+  onStep?.('正在聚合多源数据(搜索引擎+社区)...');
   const items = await Aggregator.aggregate(kw.keywords);
   if (items.length === 0) return null;
   return formatAggregated(items, idea);
 }
 
 /** 直连通道: 竞品扫描(复用市场调研聚合,提示 LLM 从中提炼竞品画像) */
-async function directCompetitorAnalysis(domain: string): Promise<string | null> {
+async function directCompetitorAnalysis(
+  domain: string,
+  onStep?: StepReporter
+): Promise<string | null> {
+  onStep?.('正在提取领域关键词...');
   const kw = await MarketResearcher.extractKeywords(`${domain} 竞品`);
+  onStep?.('正在聚合竞品画像数据...');
   const items = await Aggregator.aggregate(kw.keywords);
   if (items.length === 0) return null;
   const data = formatAggregated(items, `${domain} 竞品`);
@@ -128,7 +141,11 @@ function parseCommand(cmd: string): [string, string[]] {
 }
 
 /** 通过 stdio 调用一次 MCP server 工具(每次调用独立拉起进程,简化生命周期) */
-async function callMcpTool(toolName: string, toolArgs: Record<string, unknown>): Promise<unknown> {
+async function callMcpTool(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  onStep?: StepReporter
+): Promise<unknown> {
   const cmd = config.INSIGHTFORGE_MCP_COMMAND;
   if (!cmd?.trim()) throw new Error('MCP 通道未配置 INSIGHTFORGE_MCP_COMMAND');
   const [command, args] = parseCommand(cmd);
@@ -145,6 +162,9 @@ async function callMcpTool(toolName: string, toolArgs: Record<string, unknown>):
     INSIGHTFORGE_CACHE_ENABLED: 'false',
   };
 
+  // 阶段 1: 启动子进程(冷启动依赖多时 30-60s)
+  onStep?.('正在启动 MCP 子进程...');
+
   // Windows 下 npx / node 常以 .cmd 形式存在,Node spawn 不经 shell 无法直接执行,
   // 因此 Windows 平台需开启 shell 模式(其余平台保持直启,避免额外 shell 层)
   const proc = spawn(command, args, {
@@ -160,7 +180,8 @@ async function callMcpTool(toolName: string, toolArgs: Record<string, unknown>):
   proc.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
 
   try {
-    // 初始化握手(新行分隔的 JSON-RPC 2.0)
+    // 阶段 2: 初始化握手(JSON-RPC 2.0)
+    onStep?.('正在与 MCP 服务器握手...');
     await writeLine(proc, {
       jsonrpc: '2.0',
       id: 1,
@@ -174,6 +195,8 @@ async function callMcpTool(toolName: string, toolArgs: Record<string, unknown>):
     await writeLine(proc, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     const callId = randomUUID();
+    // 阶段 3: 发送工具调用并等待结果(这一步通常最耗时,可能 30s+)
+    onStep?.('已发送工具调用,正在等待 MCP 子进程返回(最长 180 秒)...');
     await writeLine(proc, {
       jsonrpc: '2.0',
       id: callId,
@@ -280,14 +303,25 @@ function extractMcpText(result: unknown): string {
 }
 
 /** MCP 通道: 调用 market_research 工具 */
-async function mcpMarketResearch(idea: string): Promise<string> {
-  const result = await callMcpTool('market_research', { idea, depth: 'quick' });
+async function mcpMarketResearch(idea: string, onStep?: StepReporter): Promise<string> {
+  const result = await callMcpTool(
+    'market_research',
+    { idea, depth: 'quick' },
+    onStep
+  );
   return extractMcpText(result);
 }
 
 /** MCP 通道: 调用 competitor_analysis 工具 */
-async function mcpCompetitorAnalysis(domain: string): Promise<string> {
-  const result = await callMcpTool('competitor_analysis', { domain, limit: 5 });
+async function mcpCompetitorAnalysis(
+  domain: string,
+  onStep?: StepReporter
+): Promise<string> {
+  const result = await callMcpTool(
+    'competitor_analysis',
+    { domain, limit: 5 },
+    onStep
+  );
   return extractMcpText(result);
 }
 
@@ -297,34 +331,48 @@ async function mcpCompetitorAnalysis(domain: string): Promise<string> {
 
 export const DiscussionResearch = {
   /** 市场调研工具(market_research) */
-  async marketResearch(idea: string): Promise<ResearchToolResult> {
+  async marketResearch(
+    idea: string,
+    options?: { onStep?: StepReporter }
+  ): Promise<ResearchToolResult> {
+    const onStep = options?.onStep;
     // 优先走 MCP 通道(若配置);失败自动回退直连
     if (config.INSIGHTFORGE_MCP_COMMAND?.trim()) {
       try {
-        const text = await mcpMarketResearch(idea);
+        onStep?.('调用 MCP 通道进行市场调研...');
+        const text = await mcpMarketResearch(idea, onStep);
         return { tool: 'market_research', text, via: 'mcp' };
       } catch (err) {
         logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'MCP 调研失败,回退直连');
+        onStep?.('MCP 通道失败,回退直连检索...');
       }
     }
     // 直连真实检索;无数据时用内置示例兜底(免配置冷启动)
-    const direct = await directMarketResearch(idea);
+    onStep?.('调用直连通道进行市场调研...');
+    const direct = await directMarketResearch(idea, onStep);
     const text = direct ?? sampleMarketResult(idea);
     return { tool: 'market_research', text, via: 'direct' };
   },
 
   /** 竞品分析工具(competitor_analysis) */
-  async competitorAnalysis(domain: string): Promise<ResearchToolResult> {
+  async competitorAnalysis(
+    domain: string,
+    options?: { onStep?: StepReporter }
+  ): Promise<ResearchToolResult> {
+    const onStep = options?.onStep;
     if (config.INSIGHTFORGE_MCP_COMMAND?.trim()) {
       try {
-        const text = await mcpCompetitorAnalysis(domain);
+        onStep?.('调用 MCP 通道进行竞品分析...');
+        const text = await mcpCompetitorAnalysis(domain, onStep);
         return { tool: 'competitor_analysis', text, via: 'mcp' };
       } catch (err) {
         logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'MCP 竞品分析失败,回退直连');
+        onStep?.('MCP 通道失败,回退直连检索...');
       }
     }
     // 直连真实检索;无数据时用内置示例兜底(免配置冷启动)
-    const direct = await directCompetitorAnalysis(domain);
+    onStep?.('调用直连通道进行竞品分析...');
+    const direct = await directCompetitorAnalysis(domain, onStep);
     const text = direct ?? sampleCompetitorResult(domain);
     return { tool: 'competitor_analysis', text, via: 'direct' };
   },

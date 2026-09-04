@@ -233,7 +233,10 @@ describe('runChat - 调用工具路径(关键边界)', () => {
     // 关键边界:chatWithTools 和工具都只调用 1 次
     expect(mockChatWithTools).toHaveBeenCalledTimes(1);
     expect(mockMarketResearch).toHaveBeenCalledTimes(1);
-    expect(mockMarketResearch).toHaveBeenCalledWith('AI 笔记应用');
+    expect(mockMarketResearch).toHaveBeenCalledWith(
+      'AI 笔记应用',
+      expect.objectContaining({ onStep: expect.any(Function) })
+    );
     expect(mockChatCompleteWithSchemaRetry).toHaveBeenCalledTimes(1);
     // 传入 chatCompleteWithSchemaRetry 的 messages 应包含工具调用轮的所有消息
     const passedMessages = mockChatCompleteWithSchemaRetry.mock.calls[0]![0] as ChatMessage[];
@@ -296,7 +299,7 @@ describe('runChat - 调用工具路径(关键边界)', () => {
     expect(mockChatCompleteWithSchemaRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('多个工具调用按顺序执行', async () => {
+  it('多个工具调用并行执行并按原始顺序回填结果', async () => {
     const session = seedSession({ canvas: emptyCanvas });
 
     mockChatWithTools.mockResolvedValueOnce({
@@ -315,9 +318,15 @@ describe('runChat - 调用工具路径(关键边界)', () => {
     await waitForJobDone(() => DiscussionService.getChatStatus(session.id));
 
     expect(mockMarketResearch).toHaveBeenCalledTimes(1);
-    expect(mockMarketResearch).toHaveBeenCalledWith('idea');
+    expect(mockMarketResearch).toHaveBeenCalledWith(
+      'idea',
+      expect.objectContaining({ onStep: expect.any(Function) })
+    );
     expect(mockCompetitorAnalysis).toHaveBeenCalledTimes(1);
-    expect(mockCompetitorAnalysis).toHaveBeenCalledWith('domain');
+    expect(mockCompetitorAnalysis).toHaveBeenCalledWith(
+      'domain',
+      expect.objectContaining({ onStep: expect.any(Function) })
+    );
   });
 });
 

@@ -692,11 +692,14 @@ export function Discuss() {
           {MODES.find((m) => m.value === session.mode)?.label}
         </span>
         {running && (
-          <span className="text-helper text-primary inline-flex items-center gap-1">
-            分析中<span className="dot-1">.</span>
-            <span className="dot-2">.</span>
-            <span className="dot-3">.</span>
-          </span>
+          // 展示后端写入的 current_step,而不是固定"分析中",避免长任务被误判为卡死。
+          // key={job.current_step} 让阶段文案切换时重新挂载 RunningStepChip 实例,
+          // 触发 current-step-fade 入场动画(否则 key 只能影响内部 span,不会触发重新挂载)
+          //
+          // 工具调用阶段视觉强化: 后端在工具调用循环里会写"正在执行 X 工具...",
+          // 这里识别后给紫色工具 chip(符合 AI 助理紫色实线 chip 规范) + 🔧 图标,
+          // 让用户一眼区分"AI 在思考"vs"AI 在主动调用工具做事"
+          <RunningStepChip key={job.current_step} step={job.current_step} />
         )}
         <Button
           variant="primary"
@@ -948,6 +951,10 @@ export function Discuss() {
 
 /**
  * 聊天气泡 - 加相对时间 + AI 消息复制按钮
+ *
+ * 历史阶段回放: 后端在【调研数据】消息顶部会写一行 `> 🔧 来源工具: 市场调研、竞品分析`,
+ * 这里检测后渲染为气泡上方的独立紫色 chip,hover 时显示完整工具列表与原始时间。
+ * 这样用户阅读历史 AI 回应时,可以一眼看出哪些回复由实时工具数据生成。
  */
 function ChatBubble({
   role,
@@ -962,6 +969,12 @@ function ChatBubble({
 }) {
   const [copied, setCopied] = useState(false);
   const isUser = role === 'user';
+
+  // 匹配后端写入的工具来源行(只在 AI 消息上检测)
+  const sourceMatch = !isUser ? content.match(/^> 🔧 来源工具:([^\n]+)\n\n/) : null;
+  const sourceTools = sourceMatch ? sourceMatch[1]!.trim() : null;
+  // 渲染气泡内容时去掉来源行(避免用户看到原始 Markdown 引用语法)
+  const displayContent = sourceMatch ? content.slice(sourceMatch[0].length) : content;
 
   const copy = async () => {
     try {
@@ -988,6 +1001,17 @@ function ChatBubble({
       <div
         className={`max-w-[88%] flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}
       >
+        {/* 历史阶段回放: 工具来源 chip(独立于气泡上方,区分 AI 助理亲自生成 vs 实时工具数据) */}
+        {sourceTools && (
+          <span
+            title={`本轮调用了${sourceTools}获取实时数据 · 生成于 ${new Date(createdAt).toLocaleString()}`}
+            aria-label={`来源工具:${sourceTools}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-helper rounded-md border border-violet-500/50 bg-violet-500/10 text-violet-300 max-w-full"
+          >
+            <span aria-hidden className="shrink-0 text-[12px] leading-none">🔧</span>
+            <span className="truncate">来源工具:{sourceTools}</span>
+          </span>
+        )}
         <div
           className={`relative px-3 py-2 text-[14px] leading-6 whitespace-pre-wrap rounded-lg ${
             isUser
@@ -995,7 +1019,7 @@ function ChatBubble({
               : 'bg-hover-bg text-text-primary'
           }`}
         >
-          {content}
+          {displayContent}
         </div>
         <div
           className={`flex items-center gap-2 text-label text-text-tertiary opacity-60 group-hover:opacity-100 transition-opacity ${
@@ -1265,5 +1289,51 @@ function GroupCard({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * 运行中阶段提示 chip - 区分"AI 在思考"与"AI 在主动调用工具"
+ *
+ * 后端在 DiscussionService.runChat 里会按以下 6 个细粒度阶段写 current_step:
+ *   1. 正在提炼要点并重组画布...
+ *   2. AI 正在判断是否需要调用调研工具...
+ *   3. AI 决定调用 {市场调研、竞品分析} 工具...
+ *   4. 正在执行 市场调研 工具...     ← 工具调用循环,会逐个工具切换
+ *   5. 调研数据已收集,正在整合生成结论...
+ *   6. 正在梳理并更新画布...          (无工具路径)
+ *
+ * 阶段 4 用正则 /^正在执行\s*(.+?)\s*工具/ 识别,渲染为紫色工具 chip(符合 AI 助理紫色实线 chip 规范)
+ * 其他阶段保持普通主色调文本。
+ *
+ * key={step} 让阶段文案切换时重新挂载,配合 .current-step-fade 动画呈现"换阶段了"的视觉反馈。
+ */
+function RunningStepChip({ step }: { step: string }) {
+  const safeStep = step || 'AI 分析中';
+  const toolMatch = safeStep.match(/^正在执行\s*(.+?)\s*工具/);
+  const isToolStep = toolMatch !== null;
+  const toolName = isToolStep && toolMatch ? toolMatch[1]! : '';
+  const displayText = isToolStep ? `${toolName} 工具调用中` : safeStep;
+
+  return (
+    <span
+      title={safeStep}
+      className={
+        isToolStep
+          // 紫色实线 chip + 🔧 图标,和 AI 助理 chip 视觉规范对齐(border-violet-500/50 + #8B5CF6)
+          ? 'inline-flex items-center gap-1.5 min-w-0 max-w-[320px] current-step-fade px-2 py-0.5 rounded-md border border-violet-500/50 bg-violet-500/10 text-violet-300'
+          : 'text-helper text-primary inline-flex items-center gap-1 min-w-0 max-w-[280px] current-step-fade'
+      }
+    >
+      {isToolStep && (
+        <span aria-hidden className="shrink-0 text-[13px] leading-none">
+          🔧
+        </span>
+      )}
+      <span className="truncate">{displayText}</span>
+      <span className="dot-1">.</span>
+      <span className="dot-2">.</span>
+      <span className="dot-3">.</span>
+    </span>
   );
 }

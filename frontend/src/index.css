@@ -87,6 +87,16 @@ body::after {
 .dot-2 { animation: terminal-blink 1.4s infinite 0.2s; }
 .dot-3 { animation: terminal-blink 1.4s infinite 0.4s; }
 
+/* AI 思考阶段文案切换淡入: 用 key 重挂载触发,避免长任务中阶段文案硬切。
+ * 透明度 + 极轻上移,让用户看到"换阶段了"的视觉反馈,而不只是数字/文字变化。 */
+@keyframes current-step-fade {
+  0%   { opacity: 0; transform: translateY(-2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.current-step-fade {
+  animation: current-step-fade 0.25s ease-out both;
+}
+
 /* indeterminate 进度条 - 在 0~70% 之间滑动,代表后端在生成但无准确进度 */
 @keyframes indeterminate {
   0%   { transform: translateX(-100%); }
@@ -232,6 +242,10 @@ body::after {
     display: none;
   }
   .stage-pulse {
+    animation: none;
+  }
+  /* 阶段文案淡入也降级: 用户开了"减少动效"时硬切,不要 opacity/transform 抖动 */
+  .current-step-fade {
     animation: none;
   }
 }

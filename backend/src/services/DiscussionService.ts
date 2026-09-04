@@ -18,8 +18,8 @@ import {
   chatJsonWithSchemaRetry,
   chatCompleteWithSchemaRetry,
 } from './llm/LLMClient.js';
-import type { ChatMessage, ChatTool } from './llm/LLMClient.js';
-import { DiscussionResearch } from './DiscussionResearch.js';
+import type { ChatMessage, ChatTool, ChatToolCall } from './llm/LLMClient.js';
+import { DiscussionResearch, type StepReporter } from './DiscussionResearch.js';
 import { logger } from '../logger.js';
 import {
   DISCUSSION_FACILITATOR_SYSTEM,
@@ -95,6 +95,23 @@ const DISCUSSION_TOOLS: ChatTool[] = [
     },
   },
 ];
+
+/**
+ * 工具名 → 用户友好的中文名(用于 current_step 展示)。
+ * 前端会识别"正在执行 X 工具..."前缀并加紫色工具 chip 视觉强化。
+ * 若新增工具,务必同步更新此处,避免文案泄露内部 snake_case 命名。
+ */
+const TOOL_FRIENDLY_NAME: Record<string, string> = {
+  market_research: '市场调研',
+  competitor_analysis: '竞品分析',
+};
+
+/** 把一组工具调用渲染成用户可读的"中文名 列表",供 current_step 使用 */
+function formatToolNames(calls: ReadonlyArray<{ name: string }>): string {
+  const names = calls.map((c) => TOOL_FRIENDLY_NAME[c.name] ?? c.name);
+  // 中文顿号分隔,符合中文文案惯例
+  return names.join('、');
+}
 
 /** 任务 Map: sessionId -> ChatJob */
 const jobs = new Map<string, DiscussionChatJob>();
@@ -433,6 +450,9 @@ async function runChat(
 
     // 第一轮: 带工具,让模型决定是否需要实时市场数据
     const toolDataMessages: string[] = [];
+    // 细化 current_step: LLM 在决定调不调用工具、调用哪些工具。
+    // 这一步可能耗时 10-30s,粗粒度文案会让用户误判为卡死。
+    job.current_step = 'AI 正在判断是否需要调用调研工具...';
     const res = await chatWithTools(messages, DISCUSSION_TOOLS, {
       temperature: 0.5,
       maxTokens: 4096,
@@ -455,7 +475,8 @@ async function runChat(
       );
     } else {
       // 有工具调用: 执行工具,把结果回填到 messages 数组(不重新执行工具)
-      job.current_step = '正在检索实时市场数据...';
+      // 进一步细化: 先告知用户 AI 决定调用哪些工具,再逐个工具显示执行进度
+      job.current_step = `AI 决定调用 ${formatToolNames(res.toolCalls)} 工具...`;
       messages.push({
         role: 'assistant',
         content: res.content || null,
@@ -466,15 +487,50 @@ async function runChat(
         })),
       });
 
-      for (const tc of res.toolCalls) {
+      // 采集本轮调用的工具中文名,用于在【调研数据】消息顶部添加可识别的来源行,
+      // 前端 ChatBubble 会检测该引用行并渲染为独立「工具来源 chip」,便于用户回顾数据出处
+      const usedToolNames: string[] = [];
+      for (const tc of res.toolCalls) usedToolNames.push(TOOL_FRIENDLY_NAME[tc.name] ?? tc.name);
+
+      const total = res.toolCalls.length;
+
+      /**
+       * 单个工具调用结果(保留 tool_call_id 以便后续按顺序回填 messages)。
+       * 为什么不用 Map<id, text>：Promise.all 已经保证返回顺序与输入顺序一致,
+       * 用对象记录更直观,且便于后面一次性写入 toolDataMessages + messages。
+       */
+      interface ToolExecResult {
+        tc: ChatToolCall;
+        resultText: string;
+      }
+
+      /**
+       * 执行单个工具调用。
+       * onStep 透传给 DiscussionResearch（包含子阶段回调）：
+       *   - total === 1：调用方传入"完整写 current_step" 的 onStep；
+       *   - total >= 2：调用方传入"只走 logger、不写 current_step" 的 onStep，避免多任务互相覆盖。
+       * 这样所有 current_step 文案都由调用方决定，避免 runOneTool 内部
+       * 同时保留两套逻辑难以追溯。
+       */
+      async function runOneTool(
+        tc: ChatToolCall,
+        _index: number,
+        onStep?: StepReporter
+      ): Promise<ToolExecResult> {
         let resultText: string;
         try {
           const args = JSON.parse(tc.arguments || '{}') as Record<string, unknown>;
           if (tc.name === 'market_research') {
-            const r = await DiscussionResearch.marketResearch(String(args.idea ?? ''));
+            const r = await DiscussionResearch.marketResearch(
+              String(args.idea ?? ''),
+              { onStep }
+            );
             resultText = r.text;
           } else if (tc.name === 'competitor_analysis') {
-            const r = await DiscussionResearch.competitorAnalysis(String(args.domain ?? ''));
+            const r = await DiscussionResearch.competitorAnalysis(
+              String(args.domain ?? ''),
+              { onStep }
+            );
             resultText = r.text;
           } else {
             resultText = `未知工具:${tc.name}`;
@@ -482,9 +538,50 @@ async function runChat(
         } catch (err) {
           resultText = `工具执行失败:${err instanceof Error ? err.message : String(err)}`;
         }
+        return { tc, resultText };
+      }
+
+      let toolResults: ToolExecResult[];
+      if (total === 1) {
+        // 单工具：串行保留最细粒度的 onStep 反馈(current_step 实时反映每个内部步骤)
+        const tc = res.toolCalls[0]!;
+        const toolName = usedToolNames[0] ?? tc.name;
+        // 文案协议与前端 RunningStepChip 的正则 /^正在执行\s*(.+?)\s*工具/ 对齐，
+        // 确保 chip 能正确提取工具名 + 紫色高亮。
+        job.current_step = `正在执行 ${toolName} 工具...`;
+        const onStep = (s: string): void => {
+          // 遵守同一协议：工具名前缀保持不变，详情跟在冒号后
+          job.current_step = `正在执行 ${toolName} 工具:${s}`;
+        };
+        toolResults = [await runOneTool(tc, 0, onStep)];
+      } else {
+        // 多工具：并行启动,总耗时 ≈ 最慢的单一工具,而非累加。
+        // 例：2 个市场调研各 30s → 总耗时 30s（串行原本 60s）。
+        // 并行任务的 onStep 不写 current_step(避免互相覆盖),
+        // 这里仅用启动提示 + 完成计数表示总进度,前端 2s 轮询能感受到推进。
+        // 文案同样以 "正在执行 X 工具" 开头,让 RunningStepChip 能识别为工具阶段
+        // (正则提取出来的名是 "市场调研、竞品分析", chip 会展示完整列表)。
+        job.current_step = `正在并行执行 ${usedToolNames.join('、')} 工具...`;
+        let completed = 0;
+        const tasks = res.toolCalls.map((tc, i) => (async () => {
+          const r = await runOneTool(tc, i, () => {
+            // 并行 onStep 只走 logger（由 DiscussionResearch 内部 logger.debug 记录）,这里给 no-op 避免任何写入
+          });
+          completed += 1;
+          job.current_step = `正在并行执行 ${usedToolNames.join('、')} 工具:已返回 ${completed}/${total}...`;
+          return r;
+        })());
+        toolResults = await Promise.all(tasks);
+      }
+
+      // 按原始顺序回填 messages(tool_call_id 必须与 assistant.tool_calls 一一对应,
+      // Promise.all 已经保证 toolResults 顺序与 res.toolCalls 顺序一致)
+      for (const { tc, resultText } of toolResults) {
         toolDataMessages.push(resultText);
         messages.push({ role: 'tool', tool_call_id: tc.id, content: resultText });
       }
+      // 工具全部执行完毕,准备最终 JSON 整合阶段
+      job.current_step = '调研数据已收集,正在整合生成结论...';
 
       // 最终 JSON 轮: 用 chatCompleteWithSchemaRetry 复用含工具结果的 messages 数组,
       // 只对 JSON 输出做 retry,不重新跑工具调用(避免市场调研 API 被多次请求)
@@ -499,6 +596,9 @@ async function runChat(
           maxRetries: 2,
         }
       );
+
+      // 把 usedToolNames 挂到 turn 上(便于后续写入【调研数据】消息)
+      (turn as DiscussionTurn & { _usedToolNames?: string[] })._usedToolNames = usedToolNames;
     }
 
     const fresh = DiscussionService.getById(sessionId);
@@ -508,8 +608,12 @@ async function runChat(
     fresh.canvas = applyOps(fresh.canvas, turn.operations);
     // 工具采集到的市场数据作为一条 AI 消息写入对话,便于用户回溯数据来源;
     // 长度受限,避免多轮调研后大段数据撑爆会话历史与后续 prompt 上下文
+    // 消息顶部插入一行 Markdown 引用 `> 🔧 来源工具: 市场调研、竞品分析`,
+    // 前端 ChatBubble 会检测该标记并渲染为独立的「工具来源 chip」,hover 时显示完整列表
     if (toolDataMessages.length > 0) {
-      let dataMsg = `【调研数据】\n${toolDataMessages.join('\n\n')}`;
+      const usedNames = (turn as DiscussionTurn & { _usedToolNames?: string[] })._usedToolNames ?? [];
+      const sourceLine = usedNames.length > 0 ? `> 🔧 来源工具:${usedNames.join('、')}\n\n` : '';
+      let dataMsg = `${sourceLine}【调研数据】\n${toolDataMessages.join('\n\n')}`;
       if (dataMsg.length > MAX_PERSIST_DATA) {
         dataMsg = `${dataMsg.slice(0, MAX_PERSIST_DATA)}\n...(已截断,完整数据仅供当轮分析)`;
       }
