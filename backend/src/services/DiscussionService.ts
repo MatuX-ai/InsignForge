@@ -516,7 +516,7 @@ async function runChat(
         tc: ChatToolCall,
         _index: number,
         onStep?: StepReporter
-      ): Promise<ToolExecResult> {
+      ): Promise<ToolExecResult | null> {
         let resultText: string;
         try {
           const args = JSON.parse(tc.arguments || '{}') as Record<string, unknown>;
@@ -533,7 +533,14 @@ async function runChat(
             );
             resultText = r.text;
           } else {
-            resultText = `未知工具:${tc.name}`;
+            // 未声明的工具(如 LLM 把画布 op 当作 tool_calls 触发):直接跳过,
+            // 不写入 toolDataMessages 与 messages,避免污染【调研数据】消息与
+            // 下一轮 prompt 的 tool 消息链。常见误调用:add_point / add_group 等。
+            logger.warn(
+              { toolName: tc.name, tcId: tc.id },
+              '讨论工具调用遇到未声明的工具,已跳过(很可能是把画布 op 当作 tool_calls)'
+            );
+            return null;
           }
         } catch (err) {
           resultText = `工具执行失败:${err instanceof Error ? err.message : String(err)}`;
@@ -553,7 +560,8 @@ async function runChat(
           // 遵守同一协议：工具名前缀保持不变，详情跟在冒号后
           job.current_step = `正在执行 ${toolName} 工具:${s}`;
         };
-        toolResults = [await runOneTool(tc, 0, onStep)];
+        const single = await runOneTool(tc, 0, onStep);
+        toolResults = single ? [single] : [];
       } else {
         // 多工具：并行启动,总耗时 ≈ 最慢的单一工具,而非累加。
         // 例：2 个市场调研各 30s → 总耗时 30s（串行原本 60s）。
@@ -571,7 +579,9 @@ async function runChat(
           job.current_step = `正在并行执行 ${usedToolNames.join('、')} 工具:已返回 ${completed}/${total}...`;
           return r;
         })());
-        toolResults = await Promise.all(tasks);
+        // 过滤掉未声明的工具(返回 null),只保留真正执行的工具结果
+        const allResults = await Promise.all(tasks);
+        toolResults = allResults.filter((r): r is ToolExecResult => r !== null);
       }
 
       // 按原始顺序回填 messages(tool_call_id 必须与 assistant.tool_calls 一一对应,
@@ -611,7 +621,13 @@ async function runChat(
     // 消息顶部插入一行 Markdown 引用 `> 🔧 来源工具: 市场调研、竞品分析`,
     // 前端 ChatBubble 会检测该标记并渲染为独立的「工具来源 chip」,hover 时显示完整列表
     if (toolDataMessages.length > 0) {
-      const usedNames = (turn as DiscussionTurn & { _usedToolNames?: string[] })._usedToolNames ?? [];
+      // 去重:同一工具被多次调用时,chip 只展示一次,避免撑爆气泡。
+      // 用 Set 保序去重(配合 JSON.stringify 键名保持插入顺序)。
+      const usedNames = Array.from(
+        new Set(
+          (turn as DiscussionTurn & { _usedToolNames?: string[] })._usedToolNames ?? []
+        )
+      );
       const sourceLine = usedNames.length > 0 ? `> 🔧 来源工具:${usedNames.join('、')}\n\n` : '';
       let dataMsg = `${sourceLine}【调研数据】\n${toolDataMessages.join('\n\n')}`;
       if (dataMsg.length > MAX_PERSIST_DATA) {

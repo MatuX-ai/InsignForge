@@ -123,6 +123,11 @@ export const DISCUSSION_TOOL_HINT = `
 - market_research(idea): 对某个想法/领域做多源市场检索(搜索引擎+社区),返回搜索摘要、讨论热度、竞品线索、用户痛点
 - competitor_analysis(domain): 扫描某个领域的竞品画像,返回竞品名称/定位/优劣势
 
+# 硬性边界(避免把画布 op 误当成 tool_calls)
+- 你只能调用上面这两个工具,不要调用任何其它名字(包括但不限于 add_point / add_group / update_point / move_point / delete_point / rename_group / delete_group)
+- 画布的增删改请一律在最终 JSON 的 \`operations\` 数组里输出对应 op,不要通过 tool_calls 触发
+- 后端遇到未声明的工具调用会直接跳过并打 warn,不会写入【调研数据】消息
+
 # 使用时机(克制调用,不是每轮都要用)
 - 用户想法模糊,你想判断"有没有人在做 / 有没有真实需求"时 → market_research
 - 用户问"谁在做 / 有哪些竞品 / 竞争格局"时 → competitor_analysis
