@@ -20,6 +20,11 @@ directories:
 files:
   - main.cjs
   - preload.cjs
+  # main.cjs 在 v1.7+ require('./scripts/openSerpManager.cjs') 启动 OpenSerp 容器.
+  # 之前只列 main.cjs + preload.cjs 会导致 asar 里没有 scripts/, 启动报
+  # "Cannot find module './scripts/openSerpManager.cjs'".
+  # 用白名单只打包 .cjs (运行时模块),避免把 .ps1/.mjs 构建脚本也打进安装包.
+  - scripts/**/*.cjs
 
 # 运行时资源(不打入 asar, 原样放到 resources/ 下)
 extraResources:
@@ -62,10 +67,17 @@ extraResources:
       - "!**/node_modules/.package-lock.json"
       - "!**/node_modules/.cache/**"
       - "!**/node_modules/.bin/*.cmd"
-      # ---- 源码/文档型排除(所有运行时都走 dist/lib/out/v3/v4 等已编译目录) ----
-      # puppeteer-core/src (~1.21 MB TypeScript 源码) / openai/src (~1.13 MB) /
-      # zod/src (~0.80 MB) / 其他依赖里的 src 目录都是给开发者读的,运行时不用。
-      - "!**/src/**"
+      # ---- 运行时 src 目录误删问题(debug@2.x / real-require@0.2.x) ----
+      # 调试发现 debug 的 "main": "./src/index.js" (src/index.js 就是运行时入口,不是 TypeScript 源码);
+      # real-require 同样 "files": ["src"] 几乎只发布 src/. 上一版这里写的是 "!**/src/**"
+      # 把这两个包的运行时入口一起删了,后端报
+      # "Cannot find module 'A:\\InsightForge\\resources\\backend\\node_modules\\debug\\src\\index.js'"。
+      # 鱼与熊掌: 同样碰伤的还有 puppeteer-core/src (~1.21 MB) / openai/src (~1.13 MB)
+      # / zod/src (~0.80 MB) — 这三个是纯 TypeScript 源码,运行时不用。
+      # 考虑到仅 ~3 MB 的装包区别 vs 全量随手动增加 dev 依赖都会踩坑, 改为窄黑名单.
+      - "!**/node_modules/puppeteer-core/src/**"
+      - "!**/node_modules/openai/src/**"
+      - "!**/node_modules/zod/src/**"
       # devtools-protocol/json (~1.53 MB Chromium DevTools 协议 JSON 定义) + pdl (~0.60 MB),
       # 仅类型生成器需要,运行时只读 .d.ts,不含可执行代码。
       - "!**/json/**"

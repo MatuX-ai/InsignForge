@@ -24,6 +24,14 @@ const JUEJIN_SEARCH_URL = 'https://api.juejin.cn/search_api/v1/search';
 const SOURCE: MarketNeedSource = 'juejin';
 const RELIABILITY_SOURCE = 'juejin';
 
+// v1.7+: 全局首次 0 命中时 warn 一次。匿名下极易返回空数组,避免日志被刷屏。
+let warnedEmptyOnce = false;
+
+/** 仅供测试:重置 warnedEmptyOnce 标志,避免跨 it 共享状态污染。 */
+export function _resetWarnedEmptyForTest(): void {
+  warnedEmptyOnce = false;
+}
+
 const BROWSER_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -107,7 +115,17 @@ export async function searchJuejin(
           logger.debug({ err_no: data.err_no, keyword }, '掘金搜索业务错误,视为无命中');
           return [];
         }
-        return extractJuejinArticles(data);
+        const items = extractJuejinArticles(data);
+        // v1.7+: juejin 在匿名下极易返回空数组(端点迁移 / 风控均会触发),
+        // 进程级首次 0 命中时 warn 一次,避免日志被刷屏。
+        if (items.length === 0 && !warnedEmptyOnce) {
+          warnedEmptyOnce = true;
+          logger.warn(
+            { source: SOURCE, keyword, errNo: data?.err_no },
+            '掘金搜索 0 命中(匿名风控 / search 端点迁移均会触发,前端报告卡片会显示 juejin 贡献为 0)'
+          );
+        }
+        return items;
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err), keyword },

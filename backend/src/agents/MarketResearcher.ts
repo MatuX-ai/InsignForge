@@ -16,7 +16,7 @@ import { Aggregator } from '../services/search/Aggregator.js';
 import { MarketNeedService } from '../services/MarketNeedService.js';
 import { KeywordExpansionService } from '../services/KeywordExpansionService.js';
 import { PainPointExtractor } from '../services/PainPointExtractor.js';
-import { computeContributions } from '../services/search/contributions.js';
+import { computeContributions, ATTEMPTED_SOURCES } from '../services/search/contributions.js';
 import { logger } from '../logger.js';
 import {
   KEYWORD_EXTRACTION_SYSTEM,
@@ -164,7 +164,9 @@ export const MarketResearcher = {
     // ---------- 步骤 3.5: 贡献度聚合(v1.6) ----------
     // 基于本次实际落库的 market_needs 算每条 source 的 count/weight/percentage,
     // 写到 report.contributions,前端无需再次统计
-    const contributions = computeContributions(needs);
+    // v1.7+: 传入 ATTEMPTED_SOURCES,让 0 命中的源(包括骨架 / 风控报错的)
+    // 也能诚实显示在贡献卡片上,避免"100% HN"这种假象。
+    const contributions = computeContributions(needs, ATTEMPTED_SOURCES);
     if (contributions.length > 0) {
       logger.info(
         {

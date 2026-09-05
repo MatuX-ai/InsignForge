@@ -14,6 +14,11 @@ const { app, BrowserWindow, shell, dialog, session, ipcMain } = require('electro
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const {
+  startOpenSerpContainer,
+  waitOpenSerpReady,
+  stopOpenSerpContainer,
+} = require('./scripts/openSerpManager.cjs');
 
 /** IPC: 用系统默认程序打开指定路径文件(历史文档快捷打开) */
 ipcMain.handle('open-path', async (_event, p) => {
@@ -97,17 +102,53 @@ function resolveResourceDir() {
  *     better-sqlite3 open 也会报 SQLITE_CANTOPEN, 后端必然 exit(1)
  *   - NSIS 装到 C:\Program Files\InsightForge 时, "Program Files" 也没有写权限
  *     (即使不开 asar 也通不过)
- *   - 唯一稳妥的写入位置: %APPDATA%\ai.insightforge.desktop\
+ *   - 唯一稳妥的写入位置: %APPDATA%\insightforge-desktop\
+ *     ⚠️ 注意: 这是基于 package.json 的 "name" 字段(Electron 默认规则),
+ *              与 electron-builder 的 appId("ai.insightforge.desktop")不是一回事。
+ *              appId 只影响 NSIS 注册表键 / Mac bundle ID / Win 任务栏 AUMID,
+ *              不会改变 userData 路径。
  *
- * dev 模式保留旧行为 (desktop/data/), 便于本地开发/冒烟.
+ * dev 模式行为(自 v1.7.1):
+ *   - 优先用 desktop/data/ (向后兼容, 老开发工作流)
+ *   - 若 desktop/data/insightforge.db 不存在 → 回退到 packaged 路径
+ *     (%APPDATA%\insightforge-desktop\), 让开发者能在 dev 模式下直接复用
+ *     packaged 版写入的真实历史项目数据,避免两套数据互不可见。
+ *   - 两边都没有 → 新建 desktop/data/。
+ *
+ * 风险提示: dev 模式与 packaged 模式不能同时运行一个数据库文件
+ * (better-sqlite3 共享 WAL 锁); 真要双向同步,请用工具导出/导入。
  */
 function resolveUserDataDir() {
   if (app.isPackaged) {
-    return app.getPath('userData'); // %APPDATA%\ai.insightforge.desktop
+    return app.getPath('userData'); // %APPDATA%\insightforge-desktop
   }
-  const dataDir = path.join(__dirname, 'data');
-  fs.mkdirSync(dataDir, { recursive: true });
-  return dataDir;
+  // dev 模式: 优先 desktop/data/ (历史兼容)
+  const devDataDir = path.join(__dirname, 'data');
+  const devDb = path.join(devDataDir, 'insightforge.db');
+  if (fs.existsSync(devDb)) {
+    fs.mkdirSync(devDataDir, { recursive: true });
+    return devDataDir;
+  }
+  // dev 模式未发现本地数据 → 回退到 packaged 版用户数据目录,
+  // 便于开发者直接看到自己之前在 packaged 版产生的历史项目。
+  // schema 一致性: packaged 版固定 release 版 schema,dev 模式跟着 git HEAD 走。
+  // SCHEMA_SQL 用 CREATE TABLE IF NOT EXISTS,新表/新列首次访问时自动补齐,
+  // 但反向不会自动删除 packaged 版的字段(只多不少,安全)。
+  try {
+    const packagedDir = app.getPath('userData'); // %APPDATA%\insightforge-desktop
+    const packagedDb = path.join(packagedDir, 'insightforge.db');
+    if (fs.existsSync(packagedDb)) {
+      console.log(`[desktop] dev 模式: desktop/data/insightforge.db 不存在,回退到 packaged 用户数据 ${packagedDir}`);
+      fs.mkdirSync(packagedDir, { recursive: true });
+      return packagedDir;
+    }
+  } catch (err) {
+    // app 还未 ready 时 app.getPath 可能抛错,降级到 dev data
+    console.warn(`[desktop] 探测 packaged userData 失败: ${err.message}`);
+  }
+  // 都没有 → 创建本地 dev data 目录
+  fs.mkdirSync(devDataDir, { recursive: true });
+  return devDataDir;
 }
 
 /**
@@ -154,7 +195,34 @@ function resolveWindowIcon() {
   return undefined;
 }
 
-/** 启动后端子进程(纯 Node 模式) */
+/**
+ * v1.7+ 桌面启动协调: backend ready + OpenSerp 就绪后,调 backend reset 路由清开熔断器
+ * 后端可能已在 OpenSerp 启动期装入熔断(等接 5 次连接拒绝),
+ * 这里是清理一次性后门。
+ */
+async function resetOpenSerpBreaker(port) {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/api/v1/admin/sources/breaker/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'openserp' }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!resp.ok) {
+      console.warn(`[desktop] 重置 OpenSerp 熔断器 HTTP ${resp.status}`);
+      return false;
+    }
+    const payload = await resp.json().catch(() => null);
+    const existed = payload?.data?.existed;
+    console.log(`[desktop] OpenSerp 熔断器已重置(existed=${existed})`);
+    return true;
+  } catch (err) {
+    console.warn(`[desktop] 重置 OpenSerp 熔断器异常: ${err.message}`);
+    return false;
+  }
+}
+
+/** 启动后端子进程(纯 Node 模式) + 异步启动 OpenSerp 容器 */
 function startBackend() {
   const entry = resolveBackendEntry();
   if (!fs.existsSync(entry)) {
@@ -190,6 +258,30 @@ function startBackend() {
   console.log(`[desktop] data dir = ${dataDir}`);
   console.log(`[desktop] packaged = ${app.isPackaged}, userData = ${userData}`);
 
+  // v1.7+: 启动 OpenSerp 容器(需要 Docker Desktop)。不阻塞 backend 启动:
+  //   - 启动失败 → backend 仍走 OPENSERP_URL 原路径,失败 → 0 命中(已实装)
+  //   - 启动成功 → backend 子进程会拿到真实 SERP 数据
+  //   - 探活成功 → 告诉调用方,调用方会调 reset 路由清掉启动期可能误开的熔断
+  // 启动 + 拉镜像全在后台,容器起来后 waitOpenSerpReady 探活一次。
+  const openserpPromise = startOpenSerpContainer({ logger: console })
+    .then(async (info) => {
+      if (!info.ok) {
+        console.warn(`[desktop] OpenSerp 未启用: ${info.reason}`);
+        return { ok: false, reason: info.reason };
+      }
+      console.log(`[desktop] OpenSerp 容器 ${info.reused ? '复用' : '新启'}: ${info.containerName}`);
+      const ready = await waitOpenSerpReady({ logger: console });
+      if (!ready) {
+        console.warn('[desktop] OpenSerp 未在 30s 内就绪,搜索引擎通道仍可能不可用');
+        return { ok: false, reason: 'OpenSerp 30s 内未就绪' };
+      }
+      return { ok: true, containerName: info.containerName, reused: info.reused };
+    })
+    .catch((err) => {
+      console.warn(`[desktop] OpenSerp 启动异常: ${err.message},不影响 backend`);
+      return { ok: false, reason: err.message };
+    });
+
   const child = fork(entry, [], {
     env,
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -202,7 +294,7 @@ function startBackend() {
     backendProc = null;
   });
 
-  return child;
+  return { child, openserpPromise };
 }
 
 /** 等待后端就绪, 返回实际端口 */
@@ -403,13 +495,29 @@ async function bootstrap() {
     return;
   }
 
-  backendProc = startBackend();
-  if (!backendProc) return;
+  const handle = startBackend();
+  if (!handle) return;
+  backendProc = handle.child;
 
   try {
-    const port = await waitBackendReady(backendProc);
+    const port = await waitBackendReady(handle.child);
     console.log(`[desktop] 后端就绪, 端口=${port}`);
     createWindow(port);
+
+    // v1.7+: OpenSerp 就绪后主动重置 backend 的 openserp 熔断器。
+    // 启动期后端可能已经连续失败(OpenSerp 还没起来)把熔断打到了 open。
+    // 重置后首次 SERP 请求能正常发出,不需要等 30s 冷却窗口。
+    handle.openserpPromise
+      .then((result) => {
+        if (result.ok) {
+          console.log(`[desktop] OpenSerp 就绪 (${result.containerName}),重置后端熔断器...`);
+          return resetOpenSerpBreaker(port);
+        }
+        return false;
+      })
+      .catch((err) => {
+        console.warn(`[desktop] OpenSerp 就绪后重置异常: ${err.message}`);
+      });
   } catch (err) {
     console.error(`[desktop] 启动失败: ${err.message}`);
     showResourceNotReadyPage(`后端启动失败: ${err.message}`);
@@ -433,5 +541,11 @@ app.on('before-quit', () => {
   if (backendProc) {
     backendProc.kill();
     backendProc = null;
+  }
+  // v1.7+: 桌面退出时清理 OpenSerp 容器(--rm 会自动删除)
+  try {
+    stopOpenSerpContainer();
+  } catch (err) {
+    console.warn(`[desktop] 停止 OpenSerp 容器失败: ${err.message}`);
   }
 });

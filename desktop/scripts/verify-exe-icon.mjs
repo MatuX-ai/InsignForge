@@ -28,9 +28,9 @@ const RE_NSIS     = /^InsightForge-\d+\.\d+\.\d+-x64\.exe$/;
 const RE_PORTABLE = /^InsightForge-\d+\.\d+\.\d+-portable-x64\.exe$/;
 
 const exePath = (() => {
-  if (target === 'nsis')     return latestOf('dist', RE_NSIS);
-  if (target === 'portable') return latestOf('dist', RE_PORTABLE);
-  return path.resolve('dist/win-unpacked/InsightForge.exe');
+  if (target === 'nsis')     return latestOf('../RELEASE', RE_NSIS);
+  if (target === 'portable') return latestOf('../RELEASE', RE_PORTABLE);
+  return path.resolve('../RELEASE/win-unpacked/InsightForge.exe');
 })();
 if (!exePath || !fs.existsSync(exePath)) {
   console.error(`❌ 找不到 EXE (target=${target}): ${exePath ?? '(路径解析失败)'}`);

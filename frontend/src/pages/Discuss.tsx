@@ -4,7 +4,7 @@
  * 左: 结构化画布(分组 → 要点),支持增删改、移动要点、重命名/删除分组
  * 右: 与 AI 逐轮讨论,AI 每轮自动把对话提炼成画布要点,并可按要求重组
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
@@ -19,33 +19,43 @@ import type {
   DiscussionSession,
 } from '../types';
 
-const MODES: Array<{ value: DiscussionMode; label: string; desc: string }> = [
+const MODES: Array<{ value: DiscussionMode; label: string; desc: string; emoji: string }> = [
   {
     value: 'business_model',
     label: '商业模式画布',
     desc: '经典 9 格画布:客户细分 / 价值主张 / 渠道 / 收入 / 成本等',
+    emoji: '💼',
   },
   {
     value: 'lean_canvas',
     label: '精益画布',
     desc: '更聚焦创业验证:问题 / 解决方案 / 独特卖点 / 关键指标 / 壁垒',
+    emoji: '🚀',
   },
   {
     value: 'swot',
     label: 'SWOT 分析',
     desc: '优势 / 劣势 / 机会 / 威胁,适合战略盘点',
+    emoji: '⚖️',
   },
   {
     value: 'project',
     label: '软件项目要点',
     desc: '梳理项目目标 / 功能 / 场景 / 里程碑 / 风险等要点',
+    emoji: '🛠️',
   },
   {
     value: 'free',
     label: '自由头脑风暴',
     desc: '不限框架,AI 随讨论自动组织分组',
+    emoji: '💡',
   },
 ];
+
+/** 统计画布要点总数(所有 group.points.length 之和) */
+function totalPointCount(canvas: { groups: Array<{ points: unknown[] }> }): number {
+  return canvas.groups.reduce((sum, g) => sum + g.points.length, 0);
+}
 
 const STATUS_META: Record<CanvasPointStatus, { label: string; cls: string }> = {
   draft: { label: '草稿', cls: 'bg-hover-bg text-text-secondary border-border' },
@@ -60,6 +70,32 @@ const POLL_INTERVAL = 2000; // 讨论一轮比调研快,2s 轮询
 /** 去掉要点文本两侧可能带的引号/书名号 */
 function cleanText(s: string): string {
   return s.replace(/^[「『【"']\s*|\s*[」』】"']$/g, '').trim();
+}
+
+/**
+ * 判断 current_step 是否处于"工具调用"阶段
+ *
+ * 后端文案有两种形式:
+ *   - 单工具:  "正在执行 市场调研 工具..."
+ *   - 多工具:  "正在并行执行 市场调研、竞品分析 工具:已返回 1/2..."
+ * 后端 L572 注释明确说"以 '正在执行 X 工具' 开头,让 RunningStepChip 能识别",
+ * 早期版本正则太严,漏了"并行"中间那个词,需放宽。
+ */
+function isToolStep(step: string): boolean {
+  return /^正在(并行)?执行\s*.+?\s*工具/.test(step);
+}
+
+/**
+ * 从工具阶段文案里提取出第一个工具名,用于紫色 chip 显示。
+ * 例:
+ *   "正在执行 市场调研 工具..."                  → "市场调研"
+ *   "正在执行 市场调研 工具:正在抓取..."          → "市场调研"
+ *   "正在并行执行 市场调研、竞品分析 工具..."     → "市场调研、竞品分析"
+ *   "正在并行执行 市场调研、竞品分析 工具:1/2"     → "市场调研、竞品分析"
+ */
+function extractToolName(step: string): string {
+  const m = step.match(/^正在(并行)?执行\s*(.+?)\s*工具/);
+  return m ? m[2]!.trim() : '';
 }
 
 /**
@@ -116,6 +152,129 @@ export function Discuss() {
   const [createTitle, setCreateTitle] = useState('');
   const [createMessage, setCreateMessage] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // ---- 工作区左右分栏比例 + 可拖拽分隔条 ----
+  // 左(画布)/右(对话)初始 60/40,允许用户拖拽自由调整;断点 lg(1024px)及以上才生效。
+  // leftFr 是左栏占【剩宽度】(扣除分隔条 + 两侧 gap 后的可用区)的比例,clamp 在 [0.25, 0.85] 避免单边过窄。
+  // v1.7+: 用 PointerEvent 统一处理鼠标 + 触摸 + 手写笔,平板/折叠屏下也能拖; leftFr 持久化到 localStorage。
+  const SPLITTER_W = 8; // 分隔条 width=w-2
+  const GAP_W = 8; // 父容器 gap-2,三列布局中首列后与末列前各有 1 个 gap
+  const LEFT_FR_STORAGE_KEY = 'insignforge:discuss:leftFr:v1';
+  const LEFT_FR_MIN = 0.25;
+  const LEFT_FR_MAX = 0.85;
+  const LEFT_FR_DEFAULT = 0.6;
+
+  // 读取 localStorage 中的初始比例,带范围校验, 失败回退默认 0.6
+  const [leftFr, setLeftFrState] = useState<number>(() => {
+    if (typeof window === 'undefined') return LEFT_FR_DEFAULT;
+    try {
+      const raw = window.localStorage.getItem(LEFT_FR_STORAGE_KEY);
+      if (!raw) return LEFT_FR_DEFAULT;
+      const v = Number.parseFloat(raw);
+      if (!Number.isFinite(v)) return LEFT_FR_DEFAULT;
+      return Math.max(LEFT_FR_MIN, Math.min(LEFT_FR_MAX, v));
+    } catch {
+      // localStorage 可能被禁用(隐私模式 / 公司策略) → 静默走默认
+      return LEFT_FR_DEFAULT;
+    }
+  });
+  // setLeftFr 包装: 同步写 localStorage
+  const setLeftFr = useCallback((value: number | ((prev: number) => number)) => {
+    setLeftFrState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      const clamped = Math.max(LEFT_FR_MIN, Math.min(LEFT_FR_MAX, next));
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(LEFT_FR_STORAGE_KEY, String(clamped));
+        }
+      } catch {
+        /* 写入失败不影响 UI */
+      }
+      return clamped;
+    });
+  }, []);
+  const [isLargeScreen, setIsLargeScreen] = useState(false);
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
+  const workAreaRef = useRef<HTMLDivElement>(null);
+  // 节流参考时间戳(记录上次真正处理 move 的时间);初始 0 保证首次 pointermove 必过,避免按下后首帧跟丢手感。
+  const splitterLastTickRef = useRef<number>(0);
+  // 当前 pointer capture 的 id, 用以确保指针离开 splitter 时仍能收到 up/cancel 事件
+  const activePointerIdRef = useRef<number | null>(null);
+
+  // 监听断点: lg(1024px)及以上启用左右分栏 + 分隔条
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => setIsLargeScreen(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // 拖拽分隔条: 实时按指针 X 位置重新计算左栏比例
+  // 计算公式: leftFr = (clientX - container.left - gap) / (container.width - splitter - gap*2)
+  // 这样指针贴近分隔条时,左栏边缘也贴在指针处,避免“领先 14~18px”的手感偏差。
+  // 用 PointerEvent 统一鼠标 + 触摸 + 笔;
+  // setPointerCapture 之后指针离开 splitter 仍能收到 pointermove/pointerup(原始 mouseleave 会丢事件)。
+  useEffect(() => {
+    if (!isDraggingSplitter || !isLargeScreen) return;
+    const handleMove = (e: PointerEvent) => {
+      const now = Date.now();
+      if (now - splitterLastTickRef.current < 16) return; // ~60fps 节流
+      splitterLastTickRef.current = now;
+      const el = workAreaRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const usable = rect.width - SPLITTER_W - GAP_W * 2;
+      if (usable <= 0) return;
+      const ratio = (e.clientX - rect.left - GAP_W) / usable;
+      setLeftFr(ratio);
+    };
+    const handleUp = (e: PointerEvent) => {
+      // 仅处理与按下同一指针的 up, 避免其他手指误触
+      if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) {
+        return;
+      }
+      activePointerIdRef.current = null;
+      setIsDraggingSplitter(false);
+    };
+    document.addEventListener('pointermove', handleMove);
+    document.addEventListener('pointerup', handleUp);
+    document.addEventListener('pointercancel', handleUp);
+    // 拖拽时禁止文本选中 + 改光标,体验更接近 IDE 分栏
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    // 某些触摸设备不会自动把 cursor 设为 col-resize,补充设置 touch-action 防止滚动
+    document.body.style.touchAction = 'none';
+    return () => {
+      document.removeEventListener('pointermove', handleMove);
+      document.removeEventListener('pointerup', handleUp);
+      document.removeEventListener('pointercancel', handleUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.body.style.touchAction = '';
+    };
+  }, [isDraggingSplitter, isLargeScreen, setLeftFr]);
+
+  const handleSplitterDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    activePointerIdRef.current = e.pointerId;
+    // 显式 capture,确保快速拖出元素也能收到后续 move/up
+    try {
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* 某些环境不支持,document 级监听会兜底 */
+    }
+    setIsDraggingSplitter(true);
+  };
+
+  // 键盘可访问性: ←→ 调整宽度(Shift 跳大点)、Home/End 跳到极值
+  const handleSplitterKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 0.05 : 0.02;
+    if (e.key === 'ArrowLeft') { setLeftFr((f: number) => f - step); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { setLeftFr((f: number) => f + step); e.preventDefault(); }
+    else if (e.key === 'Home') { setLeftFr(LEFT_FR_MIN); e.preventDefault(); }
+    else if (e.key === 'End') { setLeftFr(LEFT_FR_MAX); e.preventDefault(); }
+  };
 
   const running = job?.status === 'running';
   const organizing = organizeJob?.status === 'running';
@@ -646,27 +805,53 @@ export function Discuss() {
               <div className="text-helper text-text-secondary">还没有梳理记录</div>
             ) : (
               <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1">
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => void open(s.id)}
-                    className="text-left p-3 border border-border rounded-lg hover:border-primary/50 hover:bg-hover-bg transition-all"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-body text-text-primary font-medium truncate">
-                        {s.title}
-                      </span>
-                      <span className="text-label text-text-secondary shrink-0">
-                        {MODES.find((m) => m.value === s.mode)?.label}
-                      </span>
-                    </div>
-                    <div className="text-helper text-text-secondary mt-1 truncate">
-                      {s.canvas.groups.length} 个分组 · {s.messages.length} 条对话 · 更新于{' '}
-                      {new Date(s.updated_at).toLocaleString()}
-                    </div>
-                  </button>
-                ))}
+                {sessions.map((s) => {
+                  // 列表卡片:模式 emoji + 标题 + 要点数 / 对话数 / 更新时间
+                  // 加 [空画布] 角标让用户一眼区分"刚创建还没讨论"与"已有内容"
+                  const modeMeta = MODES.find((m) => m.value === s.mode);
+                  const groupsCount = s.canvas.groups.length;
+                  const pointsCount = totalPointCount(s.canvas);
+                  const isEmptyCanvas = groupsCount === 0 || pointsCount === 0;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => void open(s.id)}
+                      className="text-left p-3 border border-border rounded-lg hover:border-primary/50 hover:bg-hover-bg transition-all"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span aria-hidden className="shrink-0 text-base leading-none">
+                            {modeMeta?.emoji ?? '📝'}
+                          </span>
+                          <span className="text-body text-text-primary font-medium truncate">
+                            {s.title}
+                          </span>
+                        </span>
+                        <span className="text-label text-text-secondary shrink-0">
+                          {modeMeta?.label ?? s.mode}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1.5 text-helper text-text-secondary flex-wrap">
+                        <span className={isEmptyCanvas ? 'text-amber-400' : 'text-text-secondary'}>
+                          {groupsCount} 组 · {pointsCount} 要点
+                        </span>
+                        {isEmptyCanvas && (
+                          <span
+                            title="画布为空——可能刚创建还没讨论,或讨论中 AI 未提取出要点"
+                            className="inline-flex items-center px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-label"
+                          >
+                            空画布
+                          </span>
+                        )}
+                        <span className="text-text-tertiary">·</span>
+                        <span>{s.messages.length} 条对话</span>
+                        <span className="text-text-tertiary">·</span>
+                        <span className="text-text-tertiary">更新于 {new Date(s.updated_at).toLocaleString()}</span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -845,10 +1030,22 @@ export function Discuss() {
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-4 min-h-0">
-        {/* 画布 */}
-        <div className="flex flex-col min-h-0">
-          <div className="flex items-center justify-between mb-2">
+      <div
+        ref={workAreaRef}
+        className="flex-1 flex flex-col lg:flex-row gap-2 min-h-0"
+      >
+        {/* 画布 - 大屏占左、小屏占上(滚动容器由内层 CanvasPanel 负责) */}
+        {/*
+         * overflow-hidden 防止子元素的 box-shadow / sticky 边缘溢出圆角卡片边界;
+         * 同时让左右两栏的滚动彻底隔离——之前在 lg 以下宽度变化时,
+         * 右栏 overflow-y-auto 可能因为外层滚动穿透导致画布跟着上下动,
+         * 加了 overflow-hidden + min-h-0 之后内外滚动各管各的。
+         */}
+        <div
+          className="flex flex-col min-h-0 w-full lg:w-auto overflow-hidden"
+          style={isLargeScreen ? { flex: `${leftFr} 1 0%`, minWidth: 0 } : undefined}
+        >
+          <div className="flex items-center justify-between mb-2 shrink-0">
             <span className="text-helper text-text-secondary">
               {organizing
                 ? '正在整理画布...'
@@ -860,28 +1057,87 @@ export function Discuss() {
               {organizing ? '整理中...' : '整理画布'}
             </Button>
           </div>
-          <CanvasPanel session={session} onApply={onApply} disabled={anyRunning} />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <CanvasPanel session={session} onApply={onApply} disabled={anyRunning} />
+          </div>
         </div>
 
-        {/* 对话 */}
-        <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass flex flex-col min-h-0 xl:h-full">
-          <div className="px-4 py-3 border-b border-border text-body text-text-primary font-medium">
+        {/* 可拖拽分隔条 - 仅 lg 及以上屏幕显示 */}
+        {isLargeScreen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖拽调整左右窗口宽度"
+            aria-valuenow={Math.round(leftFr * 100)}
+            aria-valuemin={25}
+            aria-valuemax={85}
+            tabIndex={0}
+            title="拖拽或按 ←→ 调整宽度"
+            onPointerDown={handleSplitterDown}
+            onKeyDown={handleSplitterKeyDown}
+            className={`group relative w-2 shrink-0 cursor-col-resize flex items-center justify-center rounded transition-colors outline-none focus-visible:bg-primary/20 focus-visible:ring-2 focus-visible:ring-primary/40 ${
+              isDraggingSplitter ? 'bg-primary/30' : 'hover:bg-primary/15'
+            }`}
+          >
+            {/* 拖拽手柄(中间 1px 实线) - 默认 30% 透明、hover/拖拽时变亮 */}
+            <span
+              className={`block w-px h-full transition-colors ${
+                isDraggingSplitter ? 'bg-primary' : 'bg-border group-hover:bg-primary/60'
+              }`}
+            />
+          </div>
+        )}
+
+        {/* 对话 - 大屏占右、小屏占下 */}
+        {/*
+         * overflow-hidden + sticky 标题:
+         * - 防止 box-shadow / sticky 边缘溢出圆角卡片
+         * - 长对话时"与 AI 讨论"标题始终钉在右栏顶部,
+         *   不会随对话滚动被挤出视口
+         */}
+        <div
+          className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass flex flex-col min-h-0 w-full lg:w-auto overflow-hidden"
+          style={isLargeScreen ? { flex: `${1 - leftFr} 1 0%`, minWidth: 0 } : undefined}
+        >
+          <div className="sticky top-0 z-10 px-4 py-3 border-b border-border text-body text-text-primary font-medium bg-card-solid/95 backdrop-blur">
             与 AI 讨论
           </div>
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-[240px] xl:min-h-0">
-            {session.messages.length === 0 && (
+            {session.messages.length === 0 && !running && (
               <div className="text-helper text-text-secondary my-auto text-center">
                 在下方输入你的想法,AI 会把讨论提炼成画布要点
               </div>
             )}
             {session.messages.map((m, i) => (
               <ChatBubble
+                key={`${m.created_at}-${i}`}
                 role={m.role}
                 content={m.content}
                 createdAt={m.created_at}
                 onCopied={() => setNotice('已复制到剪贴板')}
               />
             ))}
+            {/*
+              AI 在跑的时候直接在对话气泡列表最末尾加进度反馈:
+              1. 工具调用阶段(/^正在执行\s*(.+?)\s*工具/): 显示"讨论加载面板"
+                 - 阶段时间线(6 个阶段) + ETA + 已耗时
+                 - 与首页调研过渡页 ResearchLoadingPanel 体验对齐
+              2. 其他阶段: 显示 RunningStepBubble 阶段气泡
+              这样用户视线一直在对话区,不会错过进度。
+            */}
+            {running && isToolStep(job.current_step) && (
+              <DiscussionLoadingPanel
+                step={job.current_step}
+                startedAt={job.started_at}
+              />
+            )}
+            {running && !isToolStep(job.current_step) && (
+              <RunningStepBubble
+                key={job.current_step}
+                step={job.current_step}
+                startedAt={job.started_at}
+              />
+            )}
           </div>
           <div className="p-3 border-t border-border flex flex-col gap-2">
             {/* 快捷 prompt 模板 - 仅在空输入时展示 */}
@@ -1076,43 +1332,55 @@ function CanvasPanel({
   };
 
   return (
-    <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass p-4 overflow-y-auto flex flex-col min-h-0">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass flex flex-col min-h-0 overflow-hidden">
+      {/* sticky 标题: 长画布滚动时"要点画布 / N 个要点"始终钉在顶部 */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-card-solid/95 backdrop-blur">
         <h2 className="text-body text-text-primary font-medium">要点画布</h2>
         <span className="text-label text-text-secondary">
-          {session.canvas.groups.reduce((n, g) => n + g.points.length, 0)} 个要点
+          {totalPointCount(session.canvas)} 个要点
         </span>
       </div>
 
-      {session.canvas.groups.length === 0 ? (
-        <div className="text-helper text-text-secondary my-auto text-center py-12">
-          画布为空。在右侧和 AI 讨论,或在下方直接创建分组
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 content-start">
-          {session.canvas.groups.map((g) => (
-            <GroupCard key={g.id} group={g} groups={session.canvas.groups} onApply={onApply} disabled={disabled} />
-          ))}
-        </div>
-      )}
+      {/*
+        flex-1 + overflow-y-auto 让画布内容独立滚动,
+        与右栏对话滚动完全隔离(配合外层 overflow-hidden 一起防穿透)。
+        "新增分组"留在滚动区末尾,跟随画布走而不是铺在视口底部,
+        避免遮挡最后一个分组卡片。
+      */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-4">
+        {session.canvas.groups.length === 0 ? (
+          <div className="text-helper text-text-secondary my-auto text-center py-12">
+            画布为空。在右侧和 AI 讨论,或在下方直接创建分组
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 content-start">
+            {/* 画布默认在左栏(占 60%),在 lg 及以上整体页面变左右双栏后,左栏宽度有限,
+                用 md:grid-cols-2 让卡片在中宽度及以上始终两列展示,避免单列上下堆叠占满屏高。
+                xl 以上如果用户把画布拉到很宽,再触发 3 列(此时画布宽度足够,不会拥挤)。 */}
+            {session.canvas.groups.map((g) => (
+              <GroupCard key={g.id} group={g} groups={session.canvas.groups} onApply={onApply} disabled={disabled} />
+            ))}
+          </div>
+        )}
 
-      {/* 新增分组 */}
-      <div className="mt-4 flex gap-2">
-        <input
-          type="text"
-          placeholder="新分组标题,如:商业模式、痛点…"
-          value={newGroupTitle}
-          maxLength={50}
-          disabled={disabled}
-          onChange={(e) => setNewGroupTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addGroup();
-          }}
-          className="flex-1 h-9 px-3 text-[14px] text-text-primary bg-card-solid/50 border border-border rounded-lg focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-text-tertiary disabled:opacity-40 disabled:cursor-not-allowed"
-        />
-        <Button variant="outline" onClick={addGroup} disabled={disabled || !newGroupTitle.trim()}>
-          添加分组
-        </Button>
+        {/* 新增分组 */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="新分组标题,如:商业模式、痛点…"
+            value={newGroupTitle}
+            maxLength={50}
+            disabled={disabled}
+            onChange={(e) => setNewGroupTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') addGroup();
+            }}
+            className="flex-1 h-9 px-3 text-[14px] text-text-primary bg-card-solid/50 border border-border rounded-lg focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 placeholder:text-text-tertiary disabled:opacity-40 disabled:cursor-not-allowed"
+          />
+          <Button variant="outline" onClick={addGroup} disabled={disabled || !newGroupTitle.trim()}>
+            添加分组
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -1335,5 +1603,349 @@ function RunningStepChip({ step }: { step: string }) {
       <span className="dot-2">.</span>
       <span className="dot-3">.</span>
     </span>
+  );
+}
+
+/**
+ * 跑阶段中加载气泡 - 直接挂在对话列表末尾,作为"AI 正在回复"的占位气泡
+ *
+ * 与 RunningStepChip 的区别:
+ * - Chip 是头部那个小小的,容易被忽略
+ * - Bubble 是聊天气泡样式,直接出现在对话区,用户视线一直在那里看得到
+ *
+ * 工具调用阶段(/^正在执行\s*(.+?)\s*工具/)会显示紫色 🔧 chip,
+ * 与报告页/调研页的 AI 助理芯片视觉一致;
+ * 普通思考阶段使用普通主色调文本。
+ *
+ * key={step} 让阶段文案切换时重新挂载,触发 .current-step-fade 动画,
+ * 配合呼吸点让用户看到"换阶段了"。
+ *
+ * 自动滚动: 每次 step 变化时滚到视口里,让用户看到最新进度;
+ * 如果用户在滚上面的历史对话(向上滚),则不抢焦点(只在本来就在底部时滚动)。
+ */
+function RunningStepBubble({ step, startedAt }: { step: string; startedAt: string }) {
+  const safeStep = step || 'AI 分析中';
+  // 用顶层 isToolStep / extractToolName 复用同一套正则,
+  // 确保三个入口(这里的 chip 颜色、DiscussionLoadingPanel 的工具名、L1111 的分流判断)严格一致
+  const inToolPhase = isToolStep(safeStep);
+  const toolName = inToolPhase ? extractToolName(safeStep) : '';
+  const displayText = inToolPhase ? `${toolName} 工具调用中` : safeStep;
+  const bubbleRef = useRef<HTMLDivElement>(null);
+
+  // 已耗时:每秒刷新。startedAt 为空时降级为 0 秒 + 额外提示
+  const [elapsed, setElapsed] = useState(0);
+  const [hasStartedAt, setHasStartedAt] = useState(() => Boolean(new Date(startedAt).getTime()));
+  useEffect(() => {
+    const startMs = new Date(startedAt).getTime();
+    if (!startMs) return;
+    setHasStartedAt(true);
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [startedAt]);
+
+  // 阶段切换时滚到气泡可见。
+  // 智能抢焦点:只有用户当前在对话列表底部(距底部 ≤ 120px)时才滚,
+  // 避免用户在读历史时被拉回去。
+  useEffect(() => {
+    const el = bubbleRef.current;
+    if (!el) return;
+    const scroller = el.closest('.overflow-y-auto') as HTMLElement | null;
+    if (!scroller) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return;
+    }
+    const distanceFromBottom =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (distanceFromBottom <= 120) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [step]);
+
+  // startedAt 缺失时(后端还没写入 started_at 字段就被前端轮询到),
+  // 避免 UI 卡在 "已思考 0 秒"误导用户以为 AI 没启动。
+  const elapsedText = !hasStartedAt
+    ? '准备中'
+    : elapsed < 60
+      ? `${elapsed} 秒`
+      : `${Math.floor(elapsed / 60)} 分 ${(elapsed % 60).toString().padStart(2, '0')} 秒`;
+
+  return (
+    <div ref={bubbleRef} className="flex justify-start">
+      <div className="max-w-[88%] flex flex-col gap-1 items-start">
+        <div
+          className={
+            inToolPhase
+              // 工具阶段: 紫色实线 chip + 🔧,与 AI 助理视觉一致
+              ? 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-violet-500/50 bg-violet-500/10 text-violet-200 current-step-fade'
+              // 普通阶段: 玻璃拟态气泡 + 主色文本 + 三点呼吸
+              : 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-hover-bg text-text-primary border border-border current-step-fade'
+          }
+        >
+          {inToolPhase ? (
+            <>
+              <span aria-hidden className="shrink-0 text-[14px] leading-none">🔧</span>
+              <span className="text-[14px] leading-6">{displayText}</span>
+              <span className="dot-1">.</span>
+              <span className="dot-2">.</span>
+              <span className="dot-3">.</span>
+            </>
+          ) : (
+            <>
+              <span aria-hidden className="shrink-0 text-primary-light text-[14px] leading-none">
+                ✦
+              </span>
+              <span className="text-[14px] leading-6">{displayText}</span>
+              <span className="dot-1">.</span>
+              <span className="dot-2">.</span>
+              <span className="dot-3">.</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-label text-text-tertiary opacity-80">
+          <span>已思考 {elapsedText}</span>
+          {inToolPhase && (
+            <span
+              title="AI 正在调用实时数据工具,这一步通常较久(10-30s),请耐心等待"
+              className="text-violet-300/80"
+            >
+              · 实时数据采集中
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 讨论加载面板(简化版 ResearchLoadingPanel)
+ *
+ * 当 AI 在讨论中调用实时数据工具(市场调研 / 竞品分析)时,
+ * 在对话列表末尾显示这块面板,提供与首页调研过渡页一致的反馈:
+ *   - 6 阶段时间线(提炼要点 → 判断调工具 → 决定调什么 → 调工具 → 整合 → 梳理画布)
+ *   - ETA(剩余时间估算,基于已耗时 + 阶段位置)
+ *   - 已耗时(每秒刷新)
+ *   - 当前工具紫色 chip(让用户知道 AI 在干什么)
+ *
+ * 与 ResearchLoadingPanel 的差异:
+ *   - 讨论任务没有 ExecutionMetrics(没有数据瀑布 / 数据源指标),
+ *     因为 DiscussionService.runChat 不写 metrics
+ *   - 阶段名称为讨论场景定制,不是调研场景
+ *
+ * 设计原则:放在对话列表底部作为"AI 正在回复"的视觉占位,
+ * 避免头部 chip 被用户忽略、让用户随时看到 AI 在干什么。
+ */
+/**
+ * 讨论任务 6 阶段识别表。
+ *
+ * 关键词匹配顺序重要——detectDiscussionStageIndex 是顺序 for 循环,
+ * 先匹配先生效。所以提取阶段的关键词不能和后续阶段重叠。
+ *
+ * 背景: 后端文案实际可能为:
+ *   1. 正在提炼要点并重组画布...            ← extract
+ *   2. AI 正在判断是否需要调用调研工具...   ← judge
+ *   3. AI 决定调用 X、Y 工具...             ← decide
+ *   4. 正在执行 X 工具...                   ← runTool
+ *      正在并行执行 X、Y 工具:已返回 N/M...  ← runTool (并行版本)
+ *   5. 调研数据已收集,正在整合生成结论...   ← merge
+ *      正在整合调研数据生成结论...          ← merge
+ *   6. 正在梳理并更新画布...                ← update (无工具路径最后一步)
+ *
+ * 早期版本中 extract 和 update 都含 "梳理并更新画布", 会让最后一步被错误识别为 stage 0,
+ * 导致 ETA 退化为 elapsed/0.05 = 19 倍膨胀，用户在 AI 快完成时反而看到 "还要 9 分 30 秒"。
+ */
+const DISCUSSION_STAGES: ReadonlyArray<{ id: string; label: string; keywords: ReadonlyArray<string> }> = [
+  { id: 'extract', label: '提炼要点', keywords: ['提炼要点'] },
+  { id: 'judge', label: '判断调工具', keywords: ['判断是否需要调用调研工具', '判断是否调用'] },
+  { id: 'decide', label: '决定调哪些', keywords: ['决定调用'] },
+  { id: 'runTool', label: '调工具采数据', keywords: ['正在执行', '正在并行执行'] },
+  { id: 'merge', label: '整合生成', keywords: ['整合生成', '调研数据已收集', '正在整合'] },
+  { id: 'update', label: '梳理画布', keywords: ['梳理并更新画布', '梳理要点'] },
+];
+
+/** 从 current_step 推断当前阶段索引(0-based)。找不到匹配返回 0。 */
+function detectDiscussionStageIndex(step: string): number {
+  const text = (step ?? '').toLowerCase();
+  if (!text.trim()) return 0;
+  for (let i = 0; i < DISCUSSION_STAGES.length; i++) {
+    if (DISCUSSION_STAGES[i]!.keywords.some((kw) => text.includes(kw.toLowerCase()))) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+function formatElapsed(sec: number): string {
+  if (sec < 60) return `${Math.floor(sec)} 秒`;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return s === 0 ? `${m} 分钟` : `${m} 分 ${s.toString().padStart(2, '0')} 秒`;
+}
+
+function DiscussionLoadingPanel({ step, startedAt }: { step: string; startedAt: string }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 已耗时
+  const [elapsed, setElapsed] = useState(0);
+  const [hasStartedAt, setHasStartedAt] = useState(() => Boolean(new Date(startedAt).getTime()));
+  useEffect(() => {
+    const startMs = new Date(startedAt).getTime();
+    if (!startMs) return;
+    setHasStartedAt(true);
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startMs) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [startedAt]);
+
+  // 当前阶段
+  const stageIndex = useMemo(() => detectDiscussionStageIndex(step), [step]);
+  const stageTotal = DISCUSSION_STAGES.length;
+
+  // ETA: 启动 10s 内样本不足 → 显示“计算中”;
+  // 阶段位置加权外推(已走阶段 / 总阶段)。
+  // 重要: stageIndex=0 时退化为 elapsed/0.05 = 20 倍,在 ETA 面板里体现为 "还有很久",
+  // 提醒用户“还在第一阶段”。这是设计选择的输出，不需要“保护默认 0”——后端应保证
+  // 阶段文案要么为空(此时 stageIndex=0 + elapsed 本身也趋近 0),要么明确属于某个阶段。
+  const eta = useMemo(() => {
+    if (elapsed < 10) return null;
+    if (stageIndex >= stageTotal - 1) return 0;
+    const finishedRatio = Math.max(0.05, stageIndex / stageTotal);
+    const totalEstimated = elapsed / finishedRatio;
+    return Math.max(0, totalEstimated - elapsed);
+  }, [elapsed, stageIndex, stageTotal]);
+
+  // 阶段切换时滚到面板可见。
+  // 智能抢焦点:仅当用户当前在对话列表底部(≤ 120px)时才滚,避免读历史时被拉回。
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el) return;
+    const scroller = el.closest('.overflow-y-auto') as HTMLElement | null;
+    if (!scroller) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return;
+    }
+    const distanceFromBottom =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    if (distanceFromBottom <= 120) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [step]);
+
+  // 提取当前工具名——复用顶层 extractToolName,
+  // 与 RunningStepBubble 同一套正则,接受单工具和"并行 X、Y"两种格式。
+  const toolName = extractToolName(step);
+
+  return (
+    <div
+      ref={panelRef}
+      className="bg-card backdrop-blur-xl border border-violet-500/30 rounded-card p-4 shadow-glass"
+    >
+      {/* 标题 + 紫色工具 chip */}
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="shrink-0 mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-violet-500/20 text-violet-300 stage-pulse"
+          title="AI 在调工具"
+        >
+          <span className="text-[14px] leading-none">🔧</span>
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-section font-semibold text-text-primary leading-tight flex items-center gap-2">
+            AI 正在调用实时数据工具
+            {toolName && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-violet-500/50 bg-violet-500/15 text-violet-200 text-label font-normal">
+                {toolName}
+              </span>
+            )}
+          </h3>
+          <p className="text-helper text-text-secondary mt-1">
+            {step}
+            <span className="dot-1">.</span>
+            <span className="dot-2">.</span>
+            <span className="dot-3">.</span>
+          </p>
+        </div>
+      </div>
+
+      {/* 进度指标条: 已耗时 / 阶段 / 剩余 */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-helper text-text-secondary tabular-nums">
+        <span>
+          <span className="text-text-tertiary">已耗时</span>{' '}
+          <span className="text-text-primary">{hasStartedAt ? formatElapsed(elapsed) : '准备中'}</span>
+        </span>
+        <span className="text-text-tertiary">·</span>
+        <span>
+          <span className="text-text-tertiary">阶段</span>{' '}
+          <span className="text-text-primary">
+            {Math.min(stageIndex + 1, stageTotal)} / {stageTotal}
+          </span>
+        </span>
+        <span className="text-text-tertiary">·</span>
+        <span>
+          <span className="text-text-tertiary">剩余</span>{' '}
+          <span className="text-primary-light">
+            {eta === null
+              ? '计算中…'
+              : stageIndex >= stageTotal - 1
+                ? '即将完成'
+                : `约 ${formatElapsed(eta)}`}
+          </span>
+        </span>
+      </div>
+
+      {/* 6 阶段时间线 */}
+      <ol className="mt-4 grid grid-cols-6 gap-1.5" aria-label="讨论阶段进度">
+        {DISCUSSION_STAGES.map((stage, idx) => {
+          const isDone = idx < stageIndex;
+          const isCurrent = idx === stageIndex;
+          const isPending = idx > stageIndex;
+          return (
+            <li
+              key={stage.id}
+              className="flex flex-col items-center gap-1 min-w-0"
+              title={stage.label}
+            >
+              <div className="relative w-full h-1 rounded-full bg-border overflow-hidden">
+                <div
+                  className={`absolute inset-y-0 left-0 ${
+                    isDone
+                      ? 'w-full bg-emerald-500/70'
+                      : isCurrent
+                        ? 'w-1/2 bg-violet-400'
+                        : 'w-0'
+                  }`}
+                />
+              </div>
+              <div
+                className={[
+                  'inline-flex h-5 w-5 items-center justify-center rounded-full text-label leading-none transition-colors',
+                  isDone
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                    : isCurrent
+                      ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40 stage-pulse'
+                      : 'bg-bg-secondary text-text-tertiary border border-border',
+                ].join(' ')}
+              >
+                {isDone ? '✓' : isCurrent ? '●' : idx + 1}
+              </div>
+              <span
+                className={`text-label leading-tight text-center w-full truncate ${
+                  isDone
+                    ? 'text-emerald-400'
+                    : isCurrent
+                      ? 'text-violet-300'
+                      : 'text-text-tertiary'
+                }`}
+              >
+                {stage.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }

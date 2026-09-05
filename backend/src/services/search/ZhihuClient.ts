@@ -25,6 +25,14 @@ const ZHIHU_SEARCH_URL = 'https://www.zhihu.com/api/v4/search_v3';
 const SOURCE: MarketNeedSource = 'zhihu';
 const RELIABILITY_SOURCE = 'zhihu';
 
+// v1.7+: 全局首次 0 命中时 warn 一次。匿名下极易 200+空 data,避免日志被刷屏。
+let warnedEmptyOnce = false;
+
+/** 仅供测试:重置 warnedEmptyOnce 标志,避免跨 it 共享状态污染。 */
+export function _resetWarnedEmptyForTest(): void {
+  warnedEmptyOnce = false;
+}
+
 // 浏览器 UA + Referer 是匿名访问 search_v3 的硬性条件(知乎会基于此区分爬虫)
 const ZHIHU_USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
@@ -98,13 +106,29 @@ export async function searchZhihu(
         );
         const data = (await res.json()) as ZhihuResponse;
         const hits = Array.isArray(data?.data) ? data.data : [];
-        return hits
+        const mapped = hits
           .map((h) => h?.object)
           .filter((o): o is ZhihuObject => !!o && typeof o === 'object')
           // 视频 / 纯提问帖不含正文,过滤以保证 content 字段有意义
           .filter((o) => o.type !== 'video' && o.type !== 'question')
           .map((o) => mapZhihuHit(keyword, o))
           .filter((m): m is NonNullable<typeof m> => m !== null);
+        // v1.7+: zhihu 在匿名访问下极易返回 200 + 空 data,
+        // 触发"前端报告卡片 100% HN 贡献、zhihu 静默 0 条"的假象。
+        // 仅在进程级首次命中 0 时 warn 一次,避免每关键词刷屏。
+        if (mapped.length === 0 && !warnedEmptyOnce) {
+          warnedEmptyOnce = true;
+          logger.warn(
+            {
+              source: SOURCE,
+              keyword,
+              hitsRaw: hits.length,
+              mappedCount: mapped.length,
+            },
+            '知乎搜索 0 命中(匿名风控 / search_v3 端点变更均会触发,前端报告卡片会显示 zhihu 贡献为 0)'
+          );
+        }
+        return mapped;
       } catch (err) {
         logger.warn(
           { err: err instanceof Error ? err.message : String(err), keyword },

@@ -6,6 +6,8 @@
  *   POST /admin/llm-retry-metrics/reset    清空计数器(调试用)
  *   GET  /admin/llm-cache/stats            查询持久化缓存用量与命中率
  *   POST /admin/llm-cache/clear-expired    主动清理过期记录
+ *   GET  /admin/sources/health             查询所有源熔断状态快照
+ *   POST /admin/sources/breaker/reset      重置指定源的熔断器+缓存(桌面 OpenSerp 就绪时调用)
  *
  * 设计:
  *   - 无鉴权(与 SettingsService / archives 路由保持一致;InsightForge 当前 MVP 阶段
@@ -35,6 +37,12 @@ import {
   getSchedulersStatus,
   type JobStatus,
 } from '../services/scheduler/index.js';
+import {
+  resetSource,
+  snapshotSourceHealth,
+  type SourceHealthSummary,
+} from '../services/search/reliability.js';
+import { logger } from '../logger.js';
 import { asyncHandler, ok } from './response.js';
 
 export const adminRouter = Router();
@@ -181,5 +189,72 @@ adminRouter.get(
       snapshotAt: new Date().toISOString(),
     };
     return ok(res, body);
+  })
+);
+
+// ----- v1.7+ 数据源熔断状态与重置(桌面 OpenSerp 就绪时调用) -----
+
+interface SourcesHealthResponse {
+  sources: SourceHealthSummary[];
+  snapshotAt: string;
+}
+
+/**
+ * 查询所有数据源的熔断状态快照(closed / open / half_open + 指标)。
+ * 供前端 Monitor / 桌面调试面板展示。
+ */
+adminRouter.get(
+  '/sources/health',
+  asyncHandler((_req, res) => {
+    const body: SourcesHealthResponse = {
+      sources: snapshotSourceHealth(),
+      snapshotAt: new Date().toISOString(),
+    };
+    return ok(res, body);
+  })
+);
+
+interface ResetSourceBreakerResponse {
+  source: string;
+  /** bundle 是否存在被删除(新一次 withReliability 会重建为 closed 状态) */
+  existed: boolean;
+  /** 是否同时清掉了该源下所有缓存条目 */
+  cacheCleared: boolean;
+  snapshotAt: string;
+}
+
+/**
+ * 重置指定数据源的熔断器 + 缓存。
+ *
+ * 设计动机:
+ *   - 桌面端 main.cjs 在 OpenSerp 容器就绪后调用本路由(source=openserp),
+ *     把"启动期内 backend 已经把 OpenSerp 熔断打开"的状态一次性清干净。
+ *   - 也供运维在 Monitor 页面手动恢复异常源。
+ *
+ * 安全:
+ *   - 仅删除 bundle + 清缓存,不动 metrics(失败计数仍可观察)
+ *   - 无鉴权但只接受本项目认知的 source 名字符串;无效 source 名返回 400
+ */
+adminRouter.post(
+  '/sources/breaker/reset',
+  asyncHandler((req, res) => {
+    const body = (req.body ?? {}) as { source?: unknown };
+    const source = typeof body.source === 'string' ? body.source.trim() : '';
+    if (!source) {
+      return res.status(400).json({
+        code: 400,
+        message: 'body.source 必填(例: "openserp" / "reddit" / "hackernews" 等)',
+      });
+    }
+    const existed = resetSource(source);
+    logger.info({ source, existed }, 'admin: 重置数据源熔断器');
+    const respBody: ResetSourceBreakerResponse = {
+      source,
+      existed,
+      // cache 在 bundle 内部,bundle 删除时随之释放;existed=true 时返回 cleared
+      cacheCleared: existed,
+      snapshotAt: new Date().toISOString(),
+    };
+    return ok(res, respBody, existed ? `源 ${source} 熔断器已重置` : `源 ${source} 未注册,无需重置`);
   })
 );

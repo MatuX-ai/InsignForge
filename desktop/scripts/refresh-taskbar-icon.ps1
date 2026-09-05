@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  refresh-taskbar-icon.ps1
 #  刷新 InsightForge 的 Windows 任务栏图标
 # ============================================================
@@ -27,12 +27,12 @@
 
 $ErrorActionPreference = 'Continue'
 
-# 1. 任务栏固定项路径 (所有 Windows 版本统一)
-$taskbarPaths = @(
-  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge.lnk",
-  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.2.lnk",
-  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.3.lnk",
-  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.4.lnk"
+# 1. 任务栏固定项路径 (Win7/8/10/11 通用结构)
+# 用 Get-ChildItem 通配符扫描,避免硬编码老版本号导致新版的 .lnk 漏清.
+$taskbarRoots = @(
+  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar",
+  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\StartMenu",
+  "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\ImplicitAppShortcuts"
 )
 
 Write-Host "================================================"
@@ -54,14 +54,17 @@ if ($confirm -notin @('', 'y', 'Y', 'yes', 'YES', 'Yes')) {
 Write-Host ""
 Write-Host "[1/3] 删除任务栏固定项..."
 $taskbarRemoved = 0
-foreach ($p in $taskbarPaths) {
-  if (Test-Path $p) {
+foreach ($root in $taskbarRoots) {
+  if (-not (Test-Path $root)) { continue }
+  # 用通配符匹配所有 InsightForge*.lnk; -Filter 限制到 lnk,避免误伤其他快捷方式
+  $lnks = Get-ChildItem -Path $root -Filter 'InsightForge*.lnk' -ErrorAction SilentlyContinue
+  foreach ($lnk in $lnks) {
     try {
-      Remove-Item -LiteralPath $p -Force
-      Write-Host "  ✓ 已删除: $p"
+      Remove-Item -LiteralPath $lnk.FullName -Force
+      Write-Host "  ✓ 已删除: $($lnk.FullName)"
       $taskbarRemoved++
     } catch {
-      Write-Host "  ✗ 删除失败: $p ($($_.Exception.Message))"
+      Write-Host "  ✗ 删除失败: $($lnk.FullName) ($($_.Exception.Message))"
     }
   }
 }

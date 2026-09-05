@@ -1,7 +1,8 @@
 /**
- * services/search/contributions.ts 单元测试(v1.6)
+ * services/search/contributions.ts 单元测试(v1.6 / v1.7+)
  *
  * 覆盖:
+ *  v1.6
  *   1. 空 needs 返回 []
  *   2. 单 source: count/weight/percentage 正确(100%)
  *   3. 多 source: 按 percentage 降序
@@ -9,6 +10,10 @@
  *   5. 未知 source 走 FALLBACK (weight=1, type=search)
  *   6. 百分比之和接近 100(允许 ±0.2 误差)
  *   7. 环境变量 INSIGHTFORGE_SOURCE_WEIGHTS 可覆盖默认权重
+ *  v1.7+(ATTEMPTED_SOURCES 路径)
+ *   8. needs=[] + attemptedSources 非空 → 返回 0 命中源列表(诚实表达)
+ *   9. needs 有数据 + attemptedSources 含 0 命中源 → 0 命中源 percentage=0 不稀释非零源
+ *  10. needs 有数据 + attemptedSources 含 0 命中源 → 百分比之和仍接近 100
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { computeContributions } from '../src/services/search/contributions.js';
@@ -166,5 +171,76 @@ describe('computeContributions: env 覆盖', () => {
     const needs = [makeNeed('reddit')];
     const result = computeContributions(needs);
     expect(result[0]?.weight).toBe(1.0);
+  });
+});
+
+describe('computeContributions: ATTEMPTED_SOURCES 路径 (v1.7+)', () => {
+  it('needs=[] + attemptedSources 非空 → 返回 0 命中源列表', () => {
+    // 全 0 命中场景: needs 为空但本次调研实际尝试过的源要诚实展示
+    const result = computeContributions([], ['reddit', 'hackernews']);
+    expect(result).toHaveLength(2);
+    expect(result.every((r) => r.count === 0)).toBe(true);
+    expect(result.every((r) => r.percentage === 0)).toBe(true);
+    // 两个源都应该带上 config(type/weight),即使 0 命中也是结构完整的
+    for (const r of result) {
+      expect(r.weight).toBeGreaterThan(0);
+      expect(['forum', 'search', 'social', 'review']).toContain(r.type);
+    }
+  });
+
+  it('needs 有数据 + attemptedSources 含 0 命中源 → 0 命中源 percentage=0 不稀释非零源', () => {
+    // needs=[reddit×3], attemptedSources=[reddit, hackernews, weibo, xiaohongshu]
+    // reddit 独享 100%, hn/weibo/xhs 都是 0%(不参与加权计算)
+    const needs = [
+      makeNeed('reddit'),
+      makeNeed('reddit'),
+      makeNeed('reddit'),
+    ];
+    const result = computeContributions(needs, [
+      'reddit',
+      'hackernews',
+      'weibo',
+      'xiaohongshu',
+    ]);
+    expect(result).toHaveLength(4);
+    const reddit = result.find((r) => r.source === 'reddit');
+    const hn = result.find((r) => r.source === 'hackernews');
+    const weibo = result.find((r) => r.source === 'weibo');
+    const xhs = result.find((r) => r.source === 'xiaohongshu');
+    expect(reddit?.count).toBe(3);
+    expect(reddit?.percentage).toBe(100);
+    expect(hn?.count).toBe(0);
+    expect(hn?.percentage).toBe(0);
+    expect(weibo?.count).toBe(0);
+    expect(weibo?.percentage).toBe(0);
+    expect(xhs?.count).toBe(0);
+    expect(xhs?.percentage).toBe(0);
+  });
+
+  it('needs 有数据 + attemptedSources 含 0 命中源 → 百分比之和仍接近 100(不包含 0 源稀释)', () => {
+    // needs=[reddit×3, hackernews×1], attemptedSources=[reddit, hackernews, weibo, xhs]
+    // 总加权 = 3*1.0 + 1*1.2 = 4.2
+    // reddit% = 71.4, hn% = 28.6, weibo/xhs% = 0
+    // sum = 100(零源不参与)
+    const needs = [
+      makeNeed('reddit'),
+      makeNeed('reddit'),
+      makeNeed('reddit'),
+      makeNeed('hackernews'),
+    ];
+    const result = computeContributions(needs, [
+      'reddit',
+      'hackernews',
+      'weibo',
+      'xiaohongshu',
+    ]);
+    const sum = result.reduce((acc, r) => acc + r.percentage, 0);
+    expect(Math.abs(sum - 100)).toBeLessThan(0.5);
+    // 排序: percentage 降序,相同 percentage 时 count 降序
+    expect(result[0]?.source).toBe('reddit');
+    expect(result[1]?.source).toBe('hackernews');
+    // 0 命中源位置不固定(都是 0%),只保证非零源在前
+    expect(result[2]?.percentage).toBe(0);
+    expect(result[3]?.percentage).toBe(0);
   });
 });

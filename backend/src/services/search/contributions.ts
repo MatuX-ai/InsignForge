@@ -29,13 +29,32 @@ export interface Contribution {
 }
 
 /**
+ * v1.7+: 本次调研实际尝试过的源(含命中为 0 / 骨架 / 报错均计入)。
+ * 从 backend/src/services/search/Aggregator.ts 的 Promise.allSettled 数组静态推导,
+ * 后续加新源时这里同步加一项;采集中粗粒度一致性由 tsc 联合类型保证。
+ */
+export const ATTEMPTED_SOURCES: readonly string[] = [
+  'google',     // OpenSerp / SerpAPI 搜索引擎
+  'hackernews', // Algolia 公开 API
+  'reddit',     // reddit.com/search.json
+  'zhihu',      // 知乎 search_v3(v1.7 实装)
+  'juejin',     // 掘金 search(v1.7 实装)
+  'weibo',      // 微博(骨架)
+  'xiaohongshu',// 小红书(骨架)
+];
+
+/**
  * 计算本次调研的数据源贡献度
  * @param needs 本次调研实际落库的 market_needs 列表
- * @returns 按 percentage 降序的贡献度数组;needs 为空时返回 []
+ * @param attemptedSources 可选;本次调研尝试过的源(含 0 命中 / 骨架),
+ *                        传入后即使该源未在 needs 中也会以 count=0 出现在结果里。
+ *                        不传则保持原 v1.6 行为(只输出 needs 里有的源)。
+ * @returns 按 percentage 降序的贡献度数组
  */
-export function computeContributions(needs: MarketNeed[]): Contribution[] {
-  if (needs.length === 0) return [];
-
+export function computeContributions(
+  needs: MarketNeed[],
+  attemptedSources?: readonly string[]
+): Contribution[] {
   // 第一遍:按 source 分组 + 计算加权总和
   const buckets = new Map<string, { count: number; weight: number; weightedSum: number }>();
   let totalWeighted = 0;
@@ -51,19 +70,34 @@ export function computeContributions(needs: MarketNeed[]): Contribution[] {
     bucket.weightedSum += cfg.weight;
     totalWeighted += cfg.weight;
   }
-  if (totalWeighted <= 0) return [];
 
-  // 第二遍:产出 Contribution 列表
+  // 第二遍(可选):补齐尝试过但 0 命中的源(不参与加权占比计算,只作为诚实表达)
+  if (attemptedSources && attemptedSources.length > 0) {
+    for (const source of attemptedSources) {
+      if (!buckets.has(source)) {
+        const cfg = getSourceConfig(source);
+        buckets.set(source, { count: 0, weight: cfg.weight, weightedSum: 0 });
+      }
+    }
+  }
+
+  // needs 为空且未传 attemptedSources:保持原 v1.6 行为,返回 []
+  if (totalWeighted <= 0 && !attemptedSources) return [];
+
+  // 第三遍:产出 Contribution 列表
+  //   - 有命中的源:percentage = count*weight / Σ(命中源的 count_i*weight_i) * 100
+  //   - 0 命中源:percentage = 0(不稀释非零源)
   const result: Contribution[] = [];
   for (const [source, b] of buckets.entries()) {
     const cfg = getSourceConfig(source);
+    const percentage =
+      totalWeighted > 0 ? Math.round((b.weightedSum / totalWeighted) * 1000) / 10 : 0;
     result.push({
       source,
       type: cfg.type,
       count: b.count,
       weight: cfg.weight,
-      // 保留 1 位小数,避免浮点抖动;占比保持和为 100(允许 0.1 误差)
-      percentage: Math.round((b.weightedSum / totalWeighted) * 1000) / 10,
+      percentage,
     });
   }
   // 按 percentage 降序,percentage 相同时按 count 降序

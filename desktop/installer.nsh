@@ -62,6 +62,9 @@
 
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+; 不 !include "nsExec.nsh" — electron-builder 自带的 nsis-3.0.4.1 缓存里没有这个头文件
+; (Plugins\x86-unicode\nsExec.dll 在, 但 Include\nsExec.nsh 缺失)。
+; 直接用内置的 ExecWait, 会闪一下控制台窗口但可接受。
 
 ; ============================================================
 ; ⚠️ installer-only 区域: 卸载器里跳过
@@ -320,17 +323,26 @@ FunctionEnd
   ; ------------------------------------------------------------
   ; 任务栏图标缓存刷新
   ; ------------------------------------------------------------
+  ; ⚠️ Windows Explorer 把每个任务栏固定项维护成独立的 .lnk 文件,
+  ; .lnk 里嵌入的图标是创建时的快照; NSIS 升级不会替换它.
+  ; 即便 InsightForge.exe 的图标资源已经更新, 用户历史任务栏的 .lnk
+  ; 仍显示旧版 InsightForge 标志. 这里必须强制删除所有历史 InsightForge*.lnk,
+  ; 之后用户重启应用再手动"固定到任务栏"才能看到新图标.
+  ;
+  ; 旧版硬编码了 InsightForge 0.1.2 ~ InsightForge 0.1.5 几个版本号,
+  ; 导致 0.1.6+ 升级后旧 .lnk 残留, 任务栏仍显示旧图标(已踩坑).
+  ; 改用 FindFirst/FindNext 通配符扫描, 一次性覆盖所有历史 .lnk.
+  ;
+  ; 注: Delete 在 Explorer 占用 .lnk 时可能静默失败; 用户重启 Explorer
+  ; (或在 RELEASE 目录运行 refresh-taskbar-icon.ps1) 后残留会被清掉.
+  ; ------------------------------------------------------------
   ${If} $insightforgeMarqueeHWND != 0
     System::Call 'user32::SetWindowTextW(i $insightforgeMarqueeHWND, w "▣  正在刷新任务栏图标缓存...")'
   ${EndIf}
   DetailPrint "正在刷新任务栏图标..."
   DetailPrint "删除旧任务栏固定项让新图标生效..."
-  Delete "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge.lnk"
-  Delete "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.2.lnk"
-  Delete "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.3.lnk"
-  Delete "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.4.lnk"
-  Delete "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\InsightForge 0.1.5.lnk"
-
+  ; 删除固定位置(任务栏 + 开始菜单 + Win11 隐式固定)所有 InsightForge*.lnk
+  !insertmacro _insightforgeUnpinAll
   ; ------------------------------------------------------------
   ; 隐藏走马灯控件 (任务完成后, 不让它出现在 Finish 页面之前)
   ; ------------------------------------------------------------
@@ -341,6 +353,73 @@ FunctionEnd
 
 
 ; ============================================================
+; 通配符扫描所有 Pinned 目录并删除 InsightForge*.lnk
+; ============================================================
+;
+; 三个固定位置都要清:
+;   - TaskBar (用户主动拖到任务栏的)
+;   - StartMenu (开始菜单磁贴钉)
+;   - ImplicitAppShortcuts (Win11 隐式固定,系统自动从最近应用列表保留的)
+;
+; 用 FindFirst/FindNext 循环, 比硬编码版本号列表更稳健.
+; ============================================================
+
+!macro _insightforgeUnpinAll
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+
+  StrCpy $2 "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned"
+  StrCpy $3 0  ; 计数器
+
+  ; 三个子目录
+  DetailPrint "  · 扫描 TaskBar..."
+  Call _insightforgeUnpinInDir
+  DetailPrint "  · 扫描 StartMenu..."
+  StrCpy $2 "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\StartMenu"
+  Call _insightforgeUnpinInDir
+  DetailPrint "  · 扫描 ImplicitAppShortcuts..."
+  StrCpy $2 "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\ImplicitAppShortcuts"
+  Call _insightforgeUnpinInDir
+
+  ${If} $3 = 0
+    DetailPrint "  (未发现旧任务栏固定项, 跳过)"
+  ${Else}
+    DetailPrint "  ✓ 已删除 $3 个旧固定项"
+  ${EndIf}
+
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+!macroend
+!define _insightforgeUnpinAll "!insertmacro _insightforgeUnpinAll"
+
+
+; 内部 Function: 删除指定目录 $2 下所有 InsightForge*.lnk
+Function _insightforgeUnpinInDir
+  Push $0
+  Push $1
+  Push $4
+  FindFirst $0 $1 "$2\InsightForge*.lnk"
+  ${If} $0 != ""
+    loop_unpin:
+      Delete "$2\$1"
+      IntOp $3 $3 + 1
+      FindNext $0 $1
+      ${If} $1 != ""
+        Goto loop_unpin
+      ${EndIf}
+    FindClose $0
+  ${EndIf}
+  Pop $4
+  Pop $1
+  Pop $0
+FunctionEnd
+
+
+; ============================================================
 ; 安装前提示: 在 onInit 末尾写入运行时信息
 ; (MUI 还没建, 只能被动写入环境变量 / 打印到日志)
 ; ============================================================
@@ -348,10 +427,24 @@ FunctionEnd
 !macro customInit
   ; 在 onInit 末尾被调用, 此时 MUI_PAGE_INSTFILES 还没建出来,
   ; 不能主动修改进度条 (SendMessage 找不到 $ProgressBar 句柄).
-  ; 此处仅写一条日志, 验证 include 是否生效 (出现在安装日志中).
-  ${IfNot} ${Silent}
-    ; 静默模式跳过, 避免污染安装日志
-  ${EndIf}
+  ;
+  ; 必须做的事: 强制结束所有 InsightForge.exe 进程树.
+  ; 原因: Electron 主进程 (main.cjs) 用 fork 起 backend 时把进程模型拆成:
+  ;     InsightForge.exe (主, 有窗口)
+  ;     └─ InsightForge.exe (ELECTRON_RUN_AS_NODE=1, 后端, 无窗口)
+  ; NSIS 默认的 appClose 只 FindWindow + SendMessage WM_CLOSE 关闭有窗口的主进程,
+  ; 主进程关闭时 fork 出来的 backend 子进程往往未跟随退出, 还锁着 InsightForge.exe 文件.
+  ; 后续 File /r 覆盖时撞上文件锁 → NSIS 报 "InsightForge 无法关闭"。
+  ;
+  ; 解決: taskkill /F /IM InsightForge.exe /T 强制终止进程树,
+  ; /T 同时杀子进程, /F TerminateProcess 不给 graceful 机会.
+  ;
+  ; 注: 仅在主安装器编译时包含, 卸载器不会执行这里 (在 !ifndef BUILD_UNINSTALLER 块内).
+  ; ExecWait 会闪一个 console 窗口, 1.5 秒后自动消失.
+  ; taskkill 返回码含义: 0=成功 / 128=没找到进程(可忽略) / 1=其它错误(用户大概率没在跑 InsightForge, 也忽略)
+  ExecWait 'taskkill /F /IM InsightForge.exe /T'
+  ; 短暂等待, 让 Windows 释放文件句柄和进程表
+  Sleep 1500
   ; 必须至少有一条语句 (NSIS 宏不能完全空)
   StrCpy $0 $0
 !macroend
@@ -365,6 +458,10 @@ FunctionEnd
 ; ============================================================
 
 !macro customUnInstall
+  ; 卸载器也会遇到 InsightForge 进程占用问题 (尤其 User 是从开始菜单卸载,
+  ; 但本进程未退出的情况). 同样 taskkill 一次性处理.
+  ExecWait 'taskkill /F /IM InsightForge.exe /T'
+  Sleep 1000
   DetailPrint ""
   DetailPrint "InsightForge 卸载程序已启动"
   Sleep 200
