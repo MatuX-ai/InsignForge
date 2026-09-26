@@ -8,10 +8,12 @@ import { Button } from '../components/Button';
 import { Textarea } from '../components/Textarea';
 import { Banner } from '../components/Banner';
 import { Container } from '../components/Container';
+import { Modal } from '../components/Modal';
 import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { LlmSetupPrompt } from '../components/LlmSetupPrompt';
 import { useResearch } from '../hooks/useResearch';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useIdeaTemplates } from '../hooks/useIdeaTemplates';
 import { api } from '../lib/api';
 import type { HistoryEntry, Project } from '../types';
 
@@ -55,6 +57,12 @@ export function Home() {
   const [error, setError] = useState<string | null>(null);
   const [, setHistory] = useLocalStorage<HistoryEntry[]>('history', []);
   const [lastProject, setLastProject] = useState<Project | null>(null);
+  // v1.8 P7-A: 我的想法模板(本地存储)
+  const templatesApi = useIdeaTemplates();
+  // 保存模板 Modal
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveLabel, setSaveLabel] = useState('');
+  const [saveTag, setSaveTag] = useState('');
   const {
       trigger,
       loading,
@@ -162,6 +170,24 @@ export function Home() {
               // Shift+Enter 仍为换行,与 Notion / Slack / IDE 习惯一致
               onCmdEnter={() => void submit()}
             />
+            {/* v1.8 P7-A: 快捷「保存为模板」入口 - 仅在输入超过 5 字时可保存 */}
+            {value.trim().length >= 5 && (
+              <div className="flex items-center justify-end -mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSaveLabel('');
+                    setSaveTag('');
+                    setSaveOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-helper text-text-secondary hover:text-primary-light transition-colors rounded px-2 py-1 hover:bg-primary/10"
+                  title="把当前想法保存为可复用的模板"
+                >
+                  <span aria-hidden>⭐</span>
+                  <span>保存为模板</span>
+                </button>
+              </div>
+            )}
             {showError && (
               <Banner
                 tone="error"
@@ -217,6 +243,47 @@ export function Home() {
           </div>
         </div>
 
+        {/* v1.8 P7-A: 我的模板 - 用户保存的想法快捷复用,带删除按钮 */}
+        {templatesApi.templates.length > 0 && (
+          <div className="w-full">
+            <div className="text-helper text-text-secondary mb-2 px-1">
+              我的模板 ({templatesApi.templates.length})
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {templatesApi.templates.map((t) => (
+                <div
+                  key={t.id}
+                  className="group inline-flex items-center gap-1 rounded-full bg-primary/10 hover:bg-primary/20 border border-primary/30 text-helper transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setValue(t.idea)}
+                    className="inline-flex items-center gap-1.5 pl-3 pr-1 py-1.5 text-text-primary"
+                    title={t.idea}
+                  >
+                    {t.tag && (
+                      <span className="text-primary-light font-medium">{t.tag}</span>
+                    )}
+                    <span>{t.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`确定要删除模板「${t.label}」吗?`)) {
+                        templatesApi.removeTemplate(t.id);
+                      }
+                    }}
+                    className="px-2 py-1.5 text-text-tertiary hover:text-red-400 transition-colors rounded-r-full"
+                    aria-label={`删除模板「${t.label}」`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 历史记录入口 */}
         <div className="flex gap-3 items-center text-helper text-text-tertiary">
           <a
@@ -250,6 +317,62 @@ export function Home() {
         onClose={() => setSetupOpen(false)}
         onGoSettings={() => navigate('/settings')}
       />
+
+      {/* v1.8 P7-A: 保存为模板 Modal */}
+      <Modal
+        open={saveOpen}
+        title="保存为模板"
+        size="sm"
+        primaryLabel="保存"
+        secondaryLabel="取消"
+        onClose={() => setSaveOpen(false)}
+        onPrimary={() => {
+          const result = templatesApi.addTemplate({
+            label: saveLabel,
+            idea: value,
+            tag: saveTag || undefined,
+          });
+          if (result) {
+            setSaveOpen(false);
+            setSaveLabel('');
+            setSaveTag('');
+          }
+        }}
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-helper text-text-secondary mb-1">
+              模板名称 <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={saveLabel}
+              onChange={(e) => setSaveLabel(e.target.value)}
+              placeholder="例如:SaaS 工具"
+              maxLength={30}
+              data-autofocus
+              className="w-full h-10 px-3 rounded-lg bg-bg/60 border border-border text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-helper text-text-secondary mb-1">
+              标签 <span className="text-text-tertiary">(可选,最多 12 字)</span>
+            </label>
+            <input
+              type="text"
+              value={saveTag}
+              onChange={(e) => setSaveTag(e.target.value)}
+              placeholder="例如:SaaS"
+              maxLength={12}
+              className="w-full h-10 px-3 rounded-lg bg-bg/60 border border-border text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-primary"
+            />
+          </div>
+          <div className="bg-bg/40 rounded-lg p-3 text-helper text-text-secondary">
+            <div className="text-text-tertiary mb-1">想法预览</div>
+            <div className="line-clamp-3">{value.trim()}</div>
+          </div>
+        </div>
+      </Modal>
     </Container>
   );
 }

@@ -16,6 +16,7 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useDesktopApi } from '../hooks/useDesktopApi';
+import { useProjectTags, type UseProjectTagsApi } from '../hooks/useProjectTags';
 import { StatusBadge } from '../components/StatusBadge';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
@@ -46,6 +47,11 @@ export function History() {
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [sortBy, setSortBy] = useState<SortBy>('time_desc');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // v1.8 P7-B: 自定义标签 - localStorage 存储,UI 显示 + 筛选
+  const tagsApi = useProjectTags();
+  // 当前筛选的 tag 集合(多选,空数组表示不过滤)
+  const [activeTags, setActiveTags] = useState<string[]>([]);
 
   // v1.8 P5-A: 多选对比 — 选中后勾选的项目 ID 集合,用于跳转到 /compare 路由
   // 仅 status='completed' 且 report 存在的项目可被选中;否则勾选框禁用并提示原因
@@ -129,6 +135,11 @@ export function History() {
     const filtered = projects.filter((p) => {
       // 状态筛选
       if (filterStatus !== 'all' && p.status !== filterStatus) return false;
+      // v1.8 P7-B: tag 筛选 - 项目必须包含全部 activeTags
+      if (activeTags.length > 0) {
+        const projectTags = tagsApi.getTags(p.id);
+        if (!activeTags.every((t: string) => projectTags.includes(t))) return false;
+      }
       // 关键词搜索
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -166,7 +177,13 @@ export function History() {
     });
 
     return sorted;
-  }, [projects, searchQuery, filterStatus, sortBy]);
+  }, [projects, searchQuery, filterStatus, sortBy, activeTags, tagsApi]);
+
+  // 当任意筛选条件切换时,如果 activeTags 包含已不存在的 tag,自动清掉
+  useEffect(() => {
+    if (activeTags.length === 0) return;
+    setActiveTags((prev: string[]) => prev.filter((t: string) => tagsApi.allTags.includes(t)));
+  }, [tagsApi.allTags]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 统计各状态数量
   const statusCounts = useMemo(() => {
@@ -379,6 +396,49 @@ export function History() {
             </button>
           ))}
         </div>
+
+        {/* v1.8 P7-B: 自定义标签筛选 - 多选模式,只显示用户已用过的 tag */}
+        {tagsApi.allTags.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-helper text-text-secondary shrink-0">
+              🏷️ 标签
+            </span>
+            {tagsApi.allTags.map((tag) => {
+              const active = activeTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() =>
+                    setActiveTags((prev: string[]) =>
+                      active
+                        ? prev.filter((t: string) => t !== tag)
+                        : [...prev, tag],
+                    )
+                  }
+                  className={`inline-flex items-center gap-1 px-2 py-1 text-helper rounded-full transition-colors ${
+                    active
+                      ? 'bg-accent/20 text-accent border border-accent/40'
+                      : 'bg-card-solid/50 text-text-secondary hover:bg-accent/10 border border-border'
+                  }`}
+                  aria-pressed={active}
+                >
+                  <span>{tag}</span>
+                  <span className="opacity-60">({tagsApi.tagCounts[tag]})</span>
+                </button>
+              );
+            })}
+            {activeTags.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTags([])}
+                className="text-helper text-text-secondary hover:text-text-primary px-2 py-1 rounded transition-colors"
+              >
+                清除筛选
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 错误提示 */}
@@ -455,6 +515,13 @@ export function History() {
                   selectable={selectableIdSet.has(project.id)}
                   selected={selectedForCompare.includes(project.id)}
                   onToggleCompare={() => toggleCompareSelection(project.id)}
+                  // v1.8 P7-B: 自定义标签 - 共享 tagsApi 给所有卡片(避免每个 Card 各自读 localStorage)
+                  tagsApi={tagsApi}
+                  onTagClick={(tag: string) =>
+                    setActiveTags((prev: string[]) =>
+                      prev.includes(tag) ? prev : [...prev, tag],
+                    )
+                  }
                 />
               </div>
             );
@@ -657,6 +724,9 @@ function ProjectCard({
   selectable = false,
   selected = false,
   onToggleCompare,
+  // v1.8 P7-B: 标签 API + 点击 tag 时联动筛选
+  tagsApi,
+  onTagClick,
 }: {
   project: Project;
   archive?: { dir: string; files: string[] };
@@ -678,6 +748,10 @@ function ProjectCard({
   selected?: boolean;
   /** v1.8 P5-A: 切换选中回调 */
   onToggleCompare?: () => void;
+  /** v1.8 P7-B: 标签管理 API - 共享自父级,避免每个 Card 重复读 localStorage */
+  tagsApi: UseProjectTagsApi;
+  /** v1.8 P7-B: 点击现有 tag 触发筛选(空函数也行) */
+  onTagClick?: (tag: string) => void;
 }) {
   const navigate = useNavigate();
   const dialog = useDialog();
@@ -685,6 +759,9 @@ function ProjectCard({
   const desktop = useDesktopApi();
   /** v1.7 P2-10: 归档包弹窗 - 不再直接资源管理器默认打开,而让用户从列表选择 */
   const [showArchiveModal, setShowArchiveModal] = useState(false);
+  /** v1.8 P7-B: 标签输入态 - 哪个项目正在编辑 + 当前输入草稿 */
+  const [tagAddingId, setTagAddingId] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState('');
 
   const handleClick = () => {
     navigate(`/report/${project.id}`);
@@ -873,6 +950,76 @@ function ProjectCard({
                 📎 {file}
               </button>
             ))}
+          </div>
+
+          {/* v1.8 P7-B: 自定义标签 - 复用 ProjectCard 横向空间,展示 + 添加/删除 */}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            {tagsApi.getTags(project.id).map((tag: string) => (
+              <span
+                key={tag}
+                className="group inline-flex items-center gap-0.5 rounded-full border border-accent/40 bg-accent/10 text-accent text-helper"
+              >
+                <button
+                  type="button"
+                  onClick={() => onTagClick?.(tag)}
+                  className="pl-2.5 pr-1 py-0.5 hover:underline"
+                  title={`按标签筛选「${tag}」`}
+                >
+                  {tag}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => tagsApi.removeTag(project.id, tag)}
+                  className="px-1.5 py-0.5 text-accent/60 hover:text-red-400 transition-colors rounded-r-full"
+                  aria-label={`删除标签「${tag}」`}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {tagAddingId === project.id ? (
+              <input
+                type="text"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    tagsApi.addTag(project.id, tagDraft);
+                    setTagDraft('');
+                    setTagAddingId(null);
+                  } else if (e.key === 'Escape') {
+                    setTagDraft('');
+                    setTagAddingId(null);
+                  }
+                }}
+                onBlur={() => {
+                  if (tagDraft.trim()) tagsApi.addTag(project.id, tagDraft);
+                  setTagDraft('');
+                  setTagAddingId(null);
+                }}
+                placeholder="新标签"
+                maxLength={12}
+                autoFocus
+                className="h-6 px-2 text-helper rounded-full border border-accent/40 bg-bg/60 text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+              />
+            ) : (
+              tagsApi.getTags(project.id).length < 5 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTagDraft('');
+                    setTagAddingId(project.id);
+                  }}
+                  className="inline-flex items-center gap-0.5 px-2 py-0.5 text-helper text-text-tertiary hover:text-accent border border-dashed border-border hover:border-accent/40 rounded-full transition-colors"
+                  title="添加标签(最多 5 个)"
+                >
+                  <span aria-hidden>+</span>
+                  <span>标签</span>
+                </button>
+              )
+            )}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>

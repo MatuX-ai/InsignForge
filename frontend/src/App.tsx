@@ -25,6 +25,7 @@ import { OnboardingModal } from './components/OnboardingModal';
 import { DialogProvider } from './components/Dialog';
 import { GlobalOfflineBanner } from './components/GlobalOfflineBanner';
 import { DesktopNavigator } from './components/DesktopNavigator';
+import { ShortcutsHost } from './components/ShortcutsHost';
 
 export function App() {
   return (
@@ -35,6 +36,8 @@ export function App() {
         <GlobalOfflineBanner />
         {/* v1.8 P0-A1: 订阅主进程原生 Menu / 快捷键触发的路由跳转 */}
         <DesktopNavigator />
+        {/* v1.8 P7-C: 全局快捷键宿主 - `?` 唤出说明,`/` 聚焦首页输入框 */}
+        <ShortcutsHost />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/discuss" element={<Discuss />} />

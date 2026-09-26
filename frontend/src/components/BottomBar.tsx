@@ -3,6 +3,7 @@
  * 项目资源入口
  */
 import { Link, useLocation } from 'react-router-dom';
+import { openShortcutsHelp } from './ShortcutsHost';
 
 type Item =
   | { kind: 'route'; path: string; label: string }
@@ -67,6 +68,17 @@ export function BottomBar() {
             </span>
           );
         })}
+        {/* v1.8 P7-C: 底部放一个键盘快捷键入口,常驻可见,提示用户按 `?` 看完整列表 */}
+        <span className="text-border-solid select-none">|</span>
+        <button
+          type="button"
+          onClick={openShortcutsHelp}
+          className="hover:text-text-primary transition-colors inline-flex items-center gap-1"
+          title="查看键盘快捷键(按 ? 键也可打开)"
+        >
+          <span aria-hidden>⌨️</span>
+          <span>快捷键</span>
+        </button>
       </nav>
     </footer>
   );
