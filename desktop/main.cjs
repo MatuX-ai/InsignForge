@@ -10,7 +10,7 @@
  *   - 开发模式:   desktop/resources/{backend,frontend-dist}
  *   - 打包后:     <安装目录>/resources/{backend,frontend-dist}
  */
-const { app, BrowserWindow, shell, dialog, session, ipcMain, Menu, Tray, Notification, clipboard } = require('electron');
+const { app, BrowserWindow, shell, dialog, session, ipcMain, Menu, Tray, Notification, clipboard, globalShortcut } = require('electron');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -152,6 +152,18 @@ if (!gotLock) {
 
 let mainWindow = null;
 let backendProc = null;
+
+/**
+ * v1.8 P9-B: 桌面端"关闭到托盘"机制的状态标记
+ *
+ * - appIsQuitting: 区分"用户主动退出"与"仅关闭窗口"。
+ *   false 时拦截 mainWindow.close,把窗口隐藏到托盘(Win/Linux);
+ *   true 时由 before-quit 设置,允许窗口真关闭、进程退出。
+ * - hasShownTrayHint: 首次最小化到托盘时推送一次性提示通知,告知
+ *   用户应用仍在后台运行,以及如何重新打开(Ctrl+Shift+I / 托盘单击)。
+ */
+let appIsQuitting = false;
+let hasShownTrayHint = false;
 
 /** 解析运行时资源目录(开发/打包两态) */
 function resolveResourceDir() {
@@ -454,7 +466,18 @@ function setupApplicationMenu() {
           click: () => sendNavigate('/monitor'),
         },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' },
+        isMac
+          ? { role: 'close' }
+          : {
+              label: '退出 InsightForge',
+              accelerator: 'CmdOrCtrl+Q',
+              click: () => {
+                // v1.8 P9-B: 先设置 appIsQuitting 避免 close 被拦截,
+                // 紧接着调 app.quit() 走 before-quit 清理后端进程与容器。
+                appIsQuitting = true;
+                app.quit();
+              },
+            },
       ],
     },
     {
@@ -539,56 +562,105 @@ function setupTray() {
     console.warn('[desktop] 未找到图标文件,跳过系统托盘装载');
     return;
   }
+
+  /** 聚焦主窗口并可见(被菜单项多次复用) */
+  function focusMain() {
+    const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (!main) return null;
+    if (main.isMinimized()) main.restore();
+    main.show();
+    main.focus();
+    return main;
+  }
+
+  /** 聚焦后跳路由(托盘"快速跳转"子菜单复用) */
+  function focusAndNavigate(route) {
+    const main = focusMain();
+    if (main) main.webContents.send('desktop:navigate', route);
+  }
+
   try {
     tray = new Tray(iconPath);
     tray.setToolTip('InsightForge · 一个想法到市场报告 5 分钟');
+    // v1.8 P9-B: 托盘菜单增强 - 加入历史 / 监控 / 偏好"快速跳转"子菜单,
+    // 退出项设 appIsQuitting=true 后再 quit,与"关闭到托盘"区分开。
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: '显示主窗口',
-        click: () => {
-          const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
-          if (main) {
-            if (main.isMinimized()) main.restore();
-            main.show();
-            main.focus();
-          }
-        },
-      },
-      {
-        label: '新建调研',
-        click: () => {
-          const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
-          if (main) {
-            if (main.isMinimized()) main.restore();
-            main.show();
-            main.focus();
-            main.webContents.send('desktop:navigate', '/');
-          }
-        },
+        label: '打开 InsightForge',
+        click: () => focusMain(),
       },
       { type: 'separator' },
       {
-        label: '退出',
-        click: () => app.quit(),
+        label: '快速跳转',
+        submenu: [
+          { label: '新建调研', click: () => focusAndNavigate('/') },
+          { label: '历史记录', click: () => focusAndNavigate('/history') },
+          { label: '监控中心', click: () => focusAndNavigate('/monitor') },
+          { label: '偏好设置', click: () => focusAndNavigate('/settings') },
+          { type: 'separator' },
+          { label: '用户中心', click: () => focusAndNavigate('/account') },
+        ],
+      },
+      { type: 'separator' },
+      {
+        label: '退出 InsightForge',
+        click: () => {
+          appIsQuitting = true;
+          app.quit();
+        },
       },
     ]);
     tray.setContextMenu(contextMenu);
     // Windows / Linux 单击托盘 = 聚焦主窗口
     // macOS 习惯单击 = 上下文菜单(已通过 setContextMenu 提供)
     if (process.platform !== 'darwin') {
-      tray.on('click', () => {
-        const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
-        if (main) {
-          if (main.isMinimized()) main.restore();
-          main.show();
-          main.focus();
-        }
-      });
+      tray.on('click', () => focusMain());
+    }
+    // 托盘双击 = 聚焦主窗口(Linux KDE/GNOME 等不区分单击/双击)
+    if (process.platform !== 'darwin') {
+      tray.on('double-click', () => focusMain());
     }
   } catch (err) {
     // 托盘装载失败(常见于 Linux 无系统托盘服务)只警告不崩溃
     console.warn(`[desktop] 系统托盘装载失败: ${err instanceof Error ? err.message : String(err)}`);
     tray = null;
+  }
+}
+
+/**
+ * v1.8 P9-B: 注册全局快捷键 Ctrl/Cmd+Shift+I
+ *
+ * 设计动机: InsightForge 在 v1.8 P9-B 起支持"关闭到托盘"(Win/Linux),
+ * 关闭后任务栏不再有图标,用户需要一个稳定的拉起入口。
+ * - macOS: 暂不注册(系统已经有 Cmd+Tab / Spotlight / Dock 多个备选,
+ *   且 macOS 窗口默认不退出,托盘也不是默认体验)
+ * - Win/Linux: Ctrl+Shift+I 当作"思 Forge" = "Insight Forge" 的助记
+ *
+ * 行为:
+ *   - 窗口已聚焦: 隐藏到托盘(与关闭按钮同语义,用户可再次拉起)
+ *   - 窗口最小化 / 隐藏 / 未聚焦: 恢复 + 聚焦
+ *
+ * 冲突: 系统若该快捷键已被占用,Electron 不会抛出错误,register() 返回 false。
+ * 不阻塞应用启动,只在控制台告警。
+ */
+function setupGlobalShortcut() {
+  if (process.platform === 'darwin') return;
+  const accelerator = 'CommandOrControl+Shift+I';
+  const ok = globalShortcut.register(accelerator, () => {
+    const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (!main) return;
+    const visible = main.isVisible() && main.isFocused();
+    if (visible) {
+      // 当前已聚焦 → 隐藏到托盘(双击行为对齐 macOS 习惯)
+      main.hide();
+    } else {
+      if (main.isMinimized()) main.restore();
+      main.show();
+      main.focus();
+    }
+  });
+  if (!ok) {
+    console.warn(`[desktop] 全局快捷键 ${accelerator} 注册失败,可能与其他应用冲突`);
   }
 }
 
@@ -843,6 +915,41 @@ function createWindow(port) {
     mainWindow.setTitle('InsightForge');
   });
 
+  // v1.8 P9-B: Win/Linux 关闭按钮 → 最小化到托盘(macOS 保留默认行为:dock 仍在)
+  // 由 tray 菜单的"退出 InsightForge"或文件菜单的"退出"项负责真正退出。
+  if (process.platform !== 'darwin') {
+    mainWindow.on('close', (e) => {
+      if (!appIsQuitting) {
+        e.preventDefault();
+        mainWindow.hide();
+        // 首次最小化到托盘时推送一次系统通知,告诉用户怎么重新打开
+        if (!hasShownTrayHint) {
+          hasShownTrayHint = true;
+          if (Notification.isSupported()) {
+            try {
+              const n = new Notification({
+                title: 'InsightForge 仍在后台运行',
+                body: '已最小化到系统托盘,可通过快捷键 Ctrl+Shift+I 或单击托盘图标重新打开。',
+                silent: false,
+              });
+              n.on('click', () => {
+                const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+                if (main) {
+                  if (main.isMinimized()) main.restore();
+                  main.show();
+                  main.focus();
+                }
+              });
+              n.show();
+            } catch (err) {
+              console.warn(`[desktop] 托盘提示通知发送失败: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      }
+    });
+  }
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -984,6 +1091,8 @@ async function bootstrap() {
   // 必须在 createWindow 之前调用 setApplicationMenu,否则首帧菜单栏闪烁
   setupApplicationMenu();
   setupTray();
+  // v1.8 P9-B: 注册全局快捷键 Ctrl+Shift+I(拉起/隐藏窗口),与关闭到托盘机制配合
+  setupGlobalShortcut();
 
   // v1.8 P4-C: splash 阶段切换 - 后端启动
   updateSplashStage('backend', '装载本地后端…');
@@ -1077,6 +1186,9 @@ function extractDeepLinkFromArgv(argv) {
 app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
+    // v1.8 P9-B: P9-B 起主窗口可能被用户隐藏到托盘,focus() 不会 unhide,
+    // 这里额外调 show() 保证深链拉起场景一定能看到窗口。
+    if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.focus();
   }
   const deepLink = extractDeepLinkFromArgv(argv);
@@ -1121,6 +1233,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // v1.8 P9-B: 标记为"真正退出",让 mainWindow.on('close') 不再拦截
+  // 必须在 kill 后端之前设置,避免 close handler 阻塞 quit 流程。
+  appIsQuitting = true;
   if (backendProc) {
     backendProc.kill();
     backendProc = null;
@@ -1130,5 +1245,14 @@ app.on('before-quit', () => {
     stopOpenSerpContainer();
   } catch (err) {
     console.warn(`[desktop] 停止 OpenSerp 容器失败: ${err.message}`);
+  }
+});
+
+// v1.8 P9-B: 释放全局快捷键绑定,避免其他进程在重启后仍被 Electron 占用
+app.on('will-quit', () => {
+  try {
+    globalShortcut.unregisterAll();
+  } catch (err) {
+    console.warn(`[desktop] 注销全局快捷键失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 });

@@ -222,6 +222,40 @@ export const api = {
   reportDownloadUrl: (projectId: string, format: 'md' | 'pdf') =>
     `/projects/${projectId}/export/${format === 'md' ? 'markdown' : 'pdf'}`,
 
+  // ----- v1.8 P9-C: 项目快照导出/导入(.insightforge) -----
+  /**
+   * 项目快照下载 URL(.insightforge = ZIP STORE)
+   * 浏览器直接 <a href={url} download> 触发下载。
+   */
+  insightforgeDownloadUrl: (projectId: string) =>
+    `/projects/${projectId}/export/insightforge`,
+
+  /**
+   * 上传 .insightforge 文件,后端会创建一份新项目,返回新项目对象。
+   * 这里不走通用 request() (因为 Content-Type 是 octet-stream,响应是 JSON)。
+   */
+  importInsightforge: async (file: File): Promise<Project> => {
+    const buf = await file.arrayBuffer();
+    const res = await fetch(`${BASE}/projects/import/insightforge`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      if (!text.trim()) {
+        throw new Error(`后端服务异常 (HTTP ${res.status},响应为空)`);
+      }
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+    const body = (await res.json()) as ApiResponse<Project>;
+    if (body.code !== 0) {
+      throw new Error(body.message);
+    }
+    return body.data as Project;
+  },
+
   /**
    * 下载报告 (.md | .pdf),返回 Blob + 文件名
    * 主要用于 PDF: 需捕获后端 503(未找到 Chromium)以降级到浏览器打印

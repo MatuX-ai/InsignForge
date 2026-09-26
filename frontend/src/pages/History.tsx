@@ -51,6 +51,10 @@ export function History() {
   const [sortBy, setSortBy] = useState<SortBy>('time_desc');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // v1.8 P9-C: .insightforge 导入 - 隐藏 <input type="file"> 的 ref
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [importing, setImporting] = useState(false);
+
   // v1.8 P7-B: 自定义标签 - localStorage 存储,UI 显示 + 筛选
   const tagsApi = useProjectTags();
   // 当前筛选的 tag 集合(多选,空数组表示不过滤)
@@ -266,6 +270,36 @@ export function History() {
     }
   };
 
+  // v1.8 P9-C: .insightforge 导入
+  // 点击「📥 导入快照」按钮 → 触发隐藏 file input → change 事件 → 调后端
+  // 成功后刷新列表 + 跳转到新项目报告页。失败弹 dialog。
+  const handleImportSnapshot = async (file: File) => {
+    if (!file) return;
+    if (importing) return;
+    setImporting(true);
+    try {
+      const newProject = await api.importInsightforge(file);
+      await dialog.alert({
+        title: '导入成功',
+        message: `项目“${newProject.name}”已导入,已加入历史记录列表。`,
+        tone: 'primary',
+      });
+      // 刷新列表并跳转到报告页
+      await loadProjects();
+      navigate(`/report/${newProject.id}`);
+    } catch (err) {
+      await dialog.alert({
+        title: '导入失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
+    } finally {
+      setImporting(false);
+      // 重置 input.value以便下次能选择同一文件
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
+  };
+
   const statusLabel: Record<FilterStatus, string> = {
     all: '全部',
     completed: '已完成',
@@ -327,10 +361,33 @@ export function History() {
     <Container size="lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-title text-text-primary">历史记录</h1>
-        <Button variant="outline" onClick={() => navigate('/')}>
-          + 新建调研
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* v1.8 P9-C: 导入 .insightforge 快照 — 全局入口,与单卡导出按钮对称 */}
+          <Button
+            variant="outline"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            title="从 .insightforge 文件导入项目快照(可在其他 InsightForge 实例使用)"
+          >
+            {importing ? '导入中…' : '📥 导入快照'}
+          </Button>
+          <Button variant="outline" onClick={() => navigate('/')}>
+            + 新建调研
+          </Button>
+        </div>
       </div>
+
+      {/* v1.8 P9-C: 隐藏的 file input — 选中文件后调后端导入 */}
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".insightforge,application/zip,application/octet-stream"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void handleImportSnapshot(f);
+        }}
+      />
 
       {/* 搜索和筛选栏 */}
       <div className="bg-card backdrop-blur-xl border border-border rounded-card p-4 mb-6 shadow-glass">
@@ -1055,6 +1112,18 @@ function ProjectCard({
           >
             {project.status === 'completed' ? '查看报告 →' : project.status === 'analyzing' ? '查看进度 →' : '开始调研 →'}
           </Link>
+          {/* v1.8 P9-C: 导出项目快照按钮(.insightforge = ZIP 完整快照,可跨账号/跨机器导入) */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadUrl(api.insightforgeDownloadUrl(project.id));
+            }}
+            title="导出项目快照 .insightforge,可在其他 InsightForge 实例导入"
+            className="px-3 py-1 text-xs rounded-full border border-primary/30 bg-primary/10 text-primary-light hover:bg-primary/20 transition-colors whitespace-nowrap"
+          >
+            📦 导出快照
+          </button>
           {/* v1.8 P2-C: 删除二级菜单 - 删除 / 清理归档后删除 / 导出后删除 */}
           <Dropdown
             align="right"

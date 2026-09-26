@@ -21,6 +21,8 @@ import { ReportToc } from '../components/ReportToc';
 import { Tooltip } from '../components/Tooltip';
 import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { SourceContributionCard } from '../components/SourceContributionCard';
+import { SourceDonut } from '../components/SourceDonut';
+import { CompetitorRadar } from '../components/CompetitorRadar';
 import { Container } from '../components/Container';
 import { PaperSizePicker } from '../components/PaperSizePicker';
 import { SectionAnnotation } from '../components/SectionAnnotation';
@@ -1797,6 +1799,18 @@ export function Report() {
                     </table>
                   </div>
 
+                  {/* v1.8 P9-A: 多维度雷达图 - 与上方表格互为补充,视觉直观看到均衡度 */}
+                {currentReport.competitors.length >= 2 && (
+                  <div className="mt-8 pt-6 border-t border-border">
+                    <div className="text-helper text-text-secondary mb-3">
+                      多维度对比(雷达视图)
+                    </div>
+                    <div className="flex justify-center">
+                      <CompetitorRadar competitors={currentReport.competitors} />
+                    </div>
+                  </div>
+                )}
+
                   {/* 移动端卡片堆叠 (<md) */}
                   <div className="md:hidden space-y-4">
                     {currentReport.competitors.map((c, i) => (
@@ -2070,6 +2084,20 @@ export function Report() {
                   />
                 }
               >
+                {/* v1.8 P9-A: 贡献度环形饼图 - 与下方横向条 + 卡片网格互为补充
+                    一眼看出主导来源,图例显示明细 */}
+                {currentReport.contributions && currentReport.contributions.length > 0 && (
+                  <div className="mb-6 p-4 bg-card-solid/30 border border-border rounded-lg">
+                    <div className="text-helper text-text-secondary mb-3">
+                      来源占比(环形视图)
+                    </div>
+                    <SourceDonut
+                      contributions={currentReport.contributions}
+                      centerLabel="条来源"
+                    />
+                  </div>
+                )}
+
                 {/* 贡献度分布条(v1.6) */}
                 {currentReport.contributions && currentReport.contributions.length > 0 ? (
                   <div className="mb-6">

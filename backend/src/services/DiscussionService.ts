@@ -326,6 +326,21 @@ export const DiscussionService = {
     return rows.map(rowToSession);
   },
 
+  /**
+   * v1.8 P9-C: 列出与指定项目关联的讨论会话。
+   * 用于项目快照导出(import .insightforge 时一并带上讨论画布与对话历史)。
+   * 默认按 updated_at DESC 排序,最近编辑的优先。
+   */
+  listByProjectId(projectId: string, limit = 100): DiscussionSession[] {
+    const db = getDb();
+    const rows = db
+      .prepare(
+        `SELECT * FROM discussion_sessions WHERE project_id = ? ORDER BY updated_at DESC LIMIT ?`
+      )
+      .all(projectId, limit) as DiscussionRow[];
+    return rows.map(rowToSession);
+  },
+
   /** 删除会话 */
   delete(id: string): boolean {
     const db = getDb();

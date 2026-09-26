@@ -8,11 +8,20 @@
  * DELETE /:id                    删除项目
  * GET    /:id/export/markdown    下载报告为 Markdown
  * GET    /:id/export/pdf         下载报告为 PDF (后端 puppeteer-core)
+ * GET    /:id/export/insightforge  v1.8 P9-C 下载项目快照为 .insightforge (ZIP)
+ * POST   /import/insightforge    v1.8 P9-C 从 .insightforge 创建新项目
+ *                               (raw octet-stream,body 是 ZIP 字节流)
  */
 import { Router } from 'express';
 import { z } from 'zod';
 import { ProjectService } from '../services/ProjectService.js';
 import { ReportService } from '../services/ReportService.js';
+import {
+  buildPackageBuffer,
+  parsePackageBuffer,
+  importPackage,
+  PackageParseError,
+} from '../services/InsightforgePackageService.js';
 import { asyncHandler, ok, fail } from './response.js';
 import { reportToMarkdown, reportFilenameBase } from '../utils/markdown.js';
 import { generateReportPdf, ChromiumNotFoundError } from '../utils/pdf.js';
@@ -317,3 +326,97 @@ projectsRouter.get(
     }
   })
 );
+
+/**
+ * v1.8 P9-C: GET /:id/export/insightforge
+ *
+ * 把整个项目打包为 .insightforge(ZIP STORE)返回浏览器下载。
+ * 与 export/markdown 单报告相比:.insightforge 包含项目元信息 + 报告 JSON +
+ * 市场原始数据 + 讨论画布 + 执行记录,完全脱离 InsightForge 也能阅读(README +
+ * report.md)和重新导入到任意 InsightForge 实例。
+ *
+ * 即便项目尚无报告,也允许导出(仅省略 report.json / report.md)。
+ */
+projectsRouter.get(
+  '/:id/export/insightforge',
+  asyncHandler<{ params: { id: string } }>((req, res) => {
+    const project = ProjectService.getById(req.params.id);
+    if (!project) return fail(res, 404, '项目不存在', 404);
+    let buf: Buffer;
+    try {
+      buf = buildPackageBuffer(project.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ err: msg, projectId: project.id }, '生成 .insightforge 包失败');
+      return fail(res, 500, `生成项目快照失败:${msg}`, 500);
+    }
+    const base = reportFilenameBase(project);
+    const encoded = encodeURIComponent(base);
+    const asciiFallback = `snapshot-${project.id.slice(0, 8)}.insightforge`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}.insightforge`
+    );
+    res.setHeader('Content-Length', buf.length.toString());
+    res.end(buf);
+  })
+);
+
+/**
+ * v1.8 P9-C: POST /import/insightforge
+ *
+ * 上传一个 .insightforge 包,内部生成新的项目 ID 与关联 id,完成后返回新项目的元数据。
+ *
+ * Body 约定:
+ *   - Content-Type: application/octet-stream 或 application/zip
+ *   - Body: 完整 ZIP 字节流(上限 50MB,超出由 express.json / 默认 100kb 拦截,这里用 express.raw 突破)
+ *   - 不依赖 multipart/form-data,避免引入 multer
+ */
+projectsRouter.post(
+  '/import/insightforge',
+  // express.raw 限制 50MB,只接受二进制 content-type;其它类型交给默认 json 解析
+  // (express.raw 必须放在 asyncHandler 之前,这样 body 才已是 Buffer)
+  expressRawZip,
+  asyncHandler<{ body?: Buffer }>((req, res) => {
+    const buf = req.body;
+    if (!buf || !(buf instanceof Buffer) || buf.length === 0) {
+      return fail(res, 400, '请求体为空,请上传有效的 .insightforge 文件');
+    }
+    if (buf.length > 50 * 1024 * 1024) {
+      return fail(res, 413, '文件过大,上限 50MB');
+    }
+    let payload;
+    try {
+      payload = parsePackageBuffer(buf);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof PackageParseError) {
+        return fail(res, 400, `解析 .insightforge 失败:${msg}`, 400);
+      }
+      logger.error({ err: msg }, '导入 .insightforge 时解析失败');
+      return fail(res, 500, `解析失败:${msg}`, 500);
+    }
+    let newProjectId: string;
+    try {
+      newProjectId = importPackage(payload, { namePrefix: '' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return fail(res, 500, `导入失败:${msg}`, 500);
+    }
+    const newProject = ProjectService.getById(newProjectId);
+    return ok(res, newProject, '项目已导入');
+  })
+);
+
+/** 仅接受二进制 octet-stream / zip 的 express.raw 中间件 */
+function expressRawZip(req: unknown, res: unknown, next: () => void) {
+  // 通过 require 引入避免顶部的 import { json, raw } 体积膨胀
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const express = require('express');
+  express.raw({ type: ['application/octet-stream', 'application/zip', 'application/x-zip-compressed'], limit: '50mb' })(
+    req,
+    res,
+    next
+  );
+}
