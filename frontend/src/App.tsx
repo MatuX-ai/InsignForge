@@ -22,6 +22,7 @@ import { Readme } from './pages/Readme';
 import { Faq } from './pages/Faq';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DialogProvider } from './components/Dialog';
+import { GlobalOfflineBanner } from './components/GlobalOfflineBanner';
 
 export function App() {
   return (
@@ -29,6 +30,7 @@ export function App() {
       <DialogProvider>
       <div className="min-h-screen flex flex-col bg-bg">
         <TopBar />
+        <GlobalOfflineBanner />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/discuss" element={<Discuss />} />

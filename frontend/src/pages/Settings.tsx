@@ -232,6 +232,10 @@ export function Settings() {
         proxyUrl,
         offlineMode,
       });
+      // v1.7.1 P2: 通知全局监听器(GlobalOfflineBanner 等)刷新状态
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('insightforge:config-changed'));
+      }
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1500);
     } catch (err) {
@@ -246,6 +250,36 @@ export function Settings() {
       只会使用本地 Ollama 与本地历史缓存。市场调研质量会显著下降,需要时回到此处关闭。
     </Banner>
   ) : null;
+
+  /**
+   * 离线模式下 LLM 兜底校验:
+   *   - 如果当前 LLM provider 是需要外部 API 的(非 Ollama),
+   *     在离线时调用会报 MissingLlmApiKeyError / OFFLINE_MODE_BLOCKED。
+   *   - 在「离线模式」卡片下方显示黄色警告 + 一键切换建议。
+   */
+  const offlineLlmWarning =
+    offlineMode && settings.llmProvider !== 'ollama' ? (
+      <Banner tone="warning" title="当前 LLM 不可用,请切换到 Ollama">
+        离线模式下 <b>{getLlmProvider(settings.llmProvider)?.label ?? settings.llmProvider}</b> 的外部调用将被拒绝。
+        请先在「大模型 API」区块切换到 <b>Ollama</b>(本地无需 Key),然后保存设置。
+      </Banner>
+    ) : null;
+
+  /**
+   * 代理 URL 格式校验:仅允许 http://host:port 或 https://host:port
+   * (SOCKS5 v1.8+ 支持,这里给出明确文字提示)
+   * 校验失败时在输入框下方显示红色提示,并阻止保存按钮变 primary
+   */
+  const proxyUrlError = useMemo(() => {
+    if (!proxyEnabled) return null;
+    const url = proxyUrl.trim();
+    if (!url) return '请填写代理地址';
+    if (!/^https?:\/\/[\w.-]+:\d{2,5}$/.test(url)) {
+      return '格式错误:应为 http://host:port 或 https://host:port(SOCKS5 在 v1.8+ 支持)';
+    }
+    return null;
+  }, [proxyEnabled, proxyUrl]);
+  const isFormInvalid = Boolean(proxyUrlError);
 
   // 离开/刷新前提示未保存修改
   useEffect(() => {
@@ -642,11 +676,22 @@ export function Settings() {
                 onChange={(e) => setProxyUrl(e.target.value)}
                 disabled={!proxyEnabled}
                 placeholder="http://127.0.0.1:7890  或  socks5://127.0.0.1:1080"
-                className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-invalid={proxyUrlError ? 'true' : 'false'}
+                className={
+                  proxyUrlError
+                    ? 'w-full h-10 px-3 border border-error rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-error focus:ring-2 focus:ring-error/20 disabled:opacity-50 disabled:cursor-not-allowed'
+                    : 'w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed'
+                }
               />
-              <div className="text-helper text-text-secondary mt-1">
-                保存后立即生效。格式:协议://主机:端口。可向代理服务商获取。
-              </div>
+              {proxyUrlError ? (
+                <div className="text-helper text-error mt-1" role="alert">
+                  {proxyUrlError}
+                </div>
+              ) : (
+                <div className="text-helper text-text-secondary mt-1">
+                  保存后立即生效。格式:协议://主机:端口。可向代理服务商获取。
+                </div>
+              )}
             </div>
           </div>
         </Card>
@@ -657,6 +702,7 @@ export function Settings() {
         <Card title="离线模式 (FR-18)">
           <div className="space-y-4">
             {offlineModeNotice}
+            {offlineLlmWarning}
             <div className="rounded-lg border border-border bg-card-solid/40 p-4 text-helper text-text-secondary leading-relaxed">
               <b className="text-text-primary">开启离线模式</b>后,后端会拒绝所有外部 API 调用,
               仅使用本地 Ollama + 本地历史缓存。这是为了对<b className="text-text-primary">数据敏感</b>的场景准备的,
@@ -681,11 +727,17 @@ export function Settings() {
       <div className="flex justify-end gap-2">
         <Button
           onClick={() => void save()}
-          disabled={loadingStatus || !isDirty}
-          variant={isDirty ? 'primary' : 'outline'}
-          title={!isDirty ? '当前无变化,无需保存' : '保存到后端'}
+          disabled={loadingStatus || !isDirty || isFormInvalid}
+          variant={isDirty && !isFormInvalid ? 'primary' : 'outline'}
+          title={
+            isFormInvalid
+              ? '表单存在错误,请检查后再保存'
+              : !isDirty
+                  ? '当前无变化,无需保存'
+                  : '保存到后端'
+          }
         >
-          {saved ? '已保存' : isDirty ? '保存设置' : '无需保存'}
+          {saved ? '已保存' : isFormInvalid ? '表单有误' : isDirty ? '保存设置' : '无需保存'}
         </Button>
       </div>
 
