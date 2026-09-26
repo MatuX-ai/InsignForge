@@ -4,6 +4,8 @@
 # monorepo 顶层 lock 必须跟踪;子包旧 lock 由 npm workspaces 协调
 packages/**/package-lock.json
 dsh-plugin/**/package-lock.json
+# desktop/resources/backend 是桌面端打包携带的后端副本,其 lock 复制自 backend/ 根 lock,不要入库
+desktop/resources/backend/package-lock.json
 
 # ---------- 构建产物 ----------
 **/dist/
@@ -115,3 +117,9 @@ desktop/release-readme.txt
 # ---------- 调试期临时截图 ----------
 diag-*.png
 diagnostic-result.png
+
+# ---------- 临时调试目录(PS1 截图 / 验证 log,不入库) ----------
+tests/*.ps1
+tests/*.log
+tests/*.png
+tests/ux-screenshots/

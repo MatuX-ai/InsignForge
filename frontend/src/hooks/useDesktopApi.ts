@@ -44,6 +44,17 @@ export interface DesktopApi {
   readonly notify: (args: { title: string; body?: string; silent?: boolean }) => Promise<{ ok: boolean; message?: string }>;
   /** v1.8 P0-A6: 复制文本到剪贴板 */
   readonly copy: (text: string) => Promise<{ ok: boolean; message?: string }>;
+  /**
+   * v1.8 P10-A: 无边框窗口控制 API。浏览器中调用主进程会返回 ok:false,
+   * TopBar 在 web 端不会渲染窗口控制按钮,所以这里的不返回值无实际影响。
+   */
+  readonly windowControls: {
+    minimize: () => Promise<{ ok: boolean; message?: string }>;
+    toggleMaximize: () => Promise<{ ok: boolean; message?: string }>;
+    isMaximized: () => Promise<{ ok: boolean; maximized: boolean }>;
+    close: () => Promise<{ ok: boolean; message?: string }>;
+    onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
+  };
 }
 
 const WEB_STUB: DesktopApi = {
@@ -56,6 +67,13 @@ const WEB_STUB: DesktopApi = {
   onNavigate: () => () => undefined,
   notify: async () => ({ ok: false, message: '仅桌面端可用' }),
   copy: async () => ({ ok: false, message: '仅桌面端可用' }),
+  windowControls: {
+    minimize: async () => ({ ok: false, message: '仅桌面端可用' }),
+    toggleMaximize: async () => ({ ok: false, message: '仅桌面端可用' }),
+    isMaximized: async () => ({ ok: false, maximized: false }),
+    close: async () => ({ ok: false, message: '仅桌面端可用' }),
+    onMaximizeChange: () => () => undefined,
+  },
 };
 
 /**

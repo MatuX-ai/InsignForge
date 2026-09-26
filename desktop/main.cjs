@@ -141,6 +141,61 @@ ipcMain.handle('desktop:copy', async (_event, text) => {
   }
 });
 
+/**
+ * v1.8 P10-A: 无边框窗口自定义顶栏 IPC 桥
+ *
+ * 前端通过 -webkit-app-region: drag 实现拖拽,通过这套 IPC 实现原生窗口控制。
+ * - minimize / toggleMaximize / close 由渲染进程按钮触发
+ * - isMaximized 由主进程在 maximize/unmaximize 变化时主动 push 给渲染进程,
+ *   前端按需同步最大/还原图标状态
+ * - 注意:close 走主进程的 "关闭到托盘" 逻辑,这里的实现只是把 BrowserWindow.close
+ *   转发给主进程,主进程在 'close' 事件里仍会按 appIsQuitting 拦截到托盘
+ */
+function registerWindowControlsIpc() {
+  ipcMain.handle('window:minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.minimize();
+      return { ok: true };
+    }
+    return { ok: false, message: '窗口不存在' };
+  });
+
+  ipcMain.handle('window:toggle-maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { ok: false, message: '窗口不存在' };
+    }
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('window:is-maximized', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, maximized: false };
+    return { ok: true, maximized: mainWindow.isMaximized() };
+  });
+
+  ipcMain.handle('window:close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+      return { ok: true };
+    }
+    return { ok: false, message: '窗口不存在' };
+  });
+}
+
+/**
+ * v1.8 P10-A: 监听主窗口 maximize/unmaximize 事件,主动向所有渲染进程推送状态。
+ * 这样前端可以无轮询地同步最大化/还原按钮的图标。
+ */
+function broadcastMaximizeState(maximized) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('window:maximize-changed', maximized);
+  }
+}
+
 /** 单实例锁: 防止重复启动 */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -883,7 +938,12 @@ function createWindow(port) {
     backgroundColor: '#0F172A',
     title: 'InsightForge',
     icon: iconPath,
-    autoHideMenuBar: false,
+    // v1.8 P10-A: 启用无边框窗口,改用前端自定义顶栏拖拽 + 窗口控制按钮。
+    // - 保留 resizable:true,用户可通过拖拽边缘(或调用 window:toggle-maximize)改变大小
+    // - autoHideMenuBar 仍开,纯 web 端 / alt 键唤出 native menu 仅作 escape hatch,
+    //   桌面端主流程不依赖 native menu
+    frame: false,
+    autoHideMenuBar: true,
     show: false, // v1.8 P4-C: 首屏 loading 窗口准备好后再 show,避免空白闪烁
     webPreferences: {
       contextIsolation: true,
@@ -914,6 +974,11 @@ function createWindow(port) {
     e.preventDefault();
     mainWindow.setTitle('InsightForge');
   });
+
+  // v1.8 P10-A: 监听主窗口最大化状态变化,主动向渲染进程推送,
+  // 让前端顶栏的最大化/还原按钮图标实时同步(无轮询)。
+  mainWindow.on('maximize', () => broadcastMaximizeState(true));
+  mainWindow.on('unmaximize', () => broadcastMaximizeState(false));
 
   // v1.8 P9-B: Win/Linux 关闭按钮 → 最小化到托盘(macOS 保留默认行为:dock 仍在)
   // 由 tray 菜单的"退出 InsightForge"或文件菜单的"退出"项负责真正退出。
@@ -1086,6 +1151,10 @@ async function bootstrap() {
   // 统一下载处理: 报告 / 开发文档 / 落地页等文件保存
   // (商业计划书不再走 HTTP 下载,改为走 IPC save-dir 弹目录对话框另存)
   setupDownloadHandler();
+
+  // v1.8 P10-A: 注册无边框顶栏窗口控制 IPC(minimize/toggleMaximize/close/isMaximized)
+  // 必须在 createWindow 之前注册,避免渲染进程首屏 IPC 找不到 handler
+  registerWindowControlsIpc();
 
   // v1.8 P0-A1/A2: 装载原生应用菜单 + 快捷键 + 系统托盘
   // 必须在 createWindow 之前调用 setApplicationMenu,否则首帧菜单栏闪烁

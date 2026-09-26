@@ -1,0 +1,8 @@
+{
+  "db_path": "I:\\InsightForge\\InsignForge\\desktop\\data\\insightforge.db",
+  "has_error_code_column": true,
+  "recent_executions": 3,
+  "with_error_code": 1,
+  "with_missing_api_key": 1,
+  "bug01_db_layer_fixed": true
+}

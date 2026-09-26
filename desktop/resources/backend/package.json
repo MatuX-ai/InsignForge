@@ -1,6 +1,6 @@
 {
   "name": "insightforge-backend",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "InsightForge 个人版后端 API - 市场调研与报告生成",
   "main": "dist/index.js",
   "type": "module",
@@ -25,7 +25,7 @@
     "openid-client": "^6.8.7",
     "pino": "^9.4.0",
     "pino-pretty": "^11.2.2",
-    "puppeteer-core": "^25.8.0",
+    "puppeteer-core": "^25.12.0",
     "zod": "^3.23.8",
     "zod-to-json-schema": "^3.23.5"
   },
@@ -35,7 +35,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.7.0",
     "@vitest/coverage-v8": "^2.1.0",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },

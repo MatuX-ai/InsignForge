@@ -1,0 +1,7 @@
+{
+  "project_id": "e7a04983-a400-4767-a7c2-6dd3efc30ec6",
+  "backend_error_code": null,
+  "modal_visible": true,
+  "modal_snippet": "首次启动 · 配置大模型InsightForge 需要调用大模型来生成市场报告,请先配置 API Key。大模型DeepSeek (推荐)智谱 GLM通义千问Kimi (月之暗面)零一万物 YiMiniMax腾讯混元商汤日日新阶跃星辰OpenAIOllama (本地)中文友好、长上下文、性价比高模型deepseek-v4-pro默认模型,可在「设置」页自由调整API Key去获取 →密钥仅在本地使",
+  "bug01_fixed": true
+}

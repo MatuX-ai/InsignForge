@@ -1,0 +1,12 @@
+{
+  "target_project_id": "4df0b71e-14bd-422d-9148-e49b9f88fb9f",
+  "new_project_id": "6755eb35-1229-4d4c-a2c7-de2d562e9d67",
+  "llm_setup_prompt_visible": true,
+  "onboarding_visible": false,
+  "click_result": {
+    "found": "马上验证想法",
+    "label": "马上验证想法",
+    "disabled": false
+  },
+  "success": true
+}

@@ -568,6 +568,21 @@ declare global {
       notify: (args: { title: string; body?: string; silent?: boolean }) => Promise<{ ok: boolean; message?: string }>;
       /** v1.8 P0-A6: 复制文本到剪贴板(错误诊断导出) */
       copy: (text: string) => Promise<{ ok: boolean; message?: string }>;
+      /**
+       * v1.8 P10-A: 无边框窗口控制桥。浏览器中调用主进程会返回 ok:false。
+       * - minimize: 最小化窗口
+       * - toggleMaximize: 最大化 / 还原
+       * - close: 关闭(Win/Linux 会走"关闭到托盘"机制)
+       * - isMaximized: 查询当前是否处于最大化状态
+       * - onMaximizeChange: 订阅主进程推送的状态变化
+       */
+      windowControls: {
+        minimize: () => Promise<{ ok: boolean; message?: string }>;
+        toggleMaximize: () => Promise<{ ok: boolean; message?: string }>;
+        isMaximized: () => Promise<{ ok: boolean; maximized: boolean }>;
+        close: () => Promise<{ ok: boolean; message?: string }>;
+        onMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
+      };
     };
   }
 }

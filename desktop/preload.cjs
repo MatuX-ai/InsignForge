@@ -32,4 +32,24 @@ contextBridge.exposeInMainWorld('insightforge', {
   notify: (args) => ipcRenderer.invoke('desktop:notify', args),
   /** v1.8 P0-A6: 复制文本到剪贴板(错误诊断导出) */
   copy: (text) => ipcRenderer.invoke('desktop:copy', text),
+  /**
+   * v1.8 P10-A: 无边框窗口控制桥。
+   * 仅 frame:false 模式下有意义;浏览器中调用会返回 ok:false。
+   * - minimize: 最小化窗口
+   * - toggleMaximize: 最大化 / 还原
+   * - close: 关闭(Win/Linux 会走"关闭到托盘"机制)
+   * - isMaximized: 查询当前是否处于最大化状态
+   * - onMaximizeChange: 订阅主进程推送的状态变化
+   */
+  windowControls: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    close: () => ipcRenderer.invoke('window:close'),
+    onMaximizeChange: (cb) => {
+      const listener = (_event, maximized) => cb(Boolean(maximized));
+      ipcRenderer.on('window:maximize-changed', listener);
+      return () => ipcRenderer.off('window:maximize-changed', listener);
+    },
+  },
 });

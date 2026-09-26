@@ -1,0 +1,74 @@
+{
+  "results": {
+    "History": {
+      "issues": [],
+      "data": {
+        "title": "历史记录",
+        "hasEmptyHint": false,
+        "buttonCount": 19,
+        "projectCardCount": 15
+      }
+    },
+    "Settings": {
+      "issues": [],
+      "data": {
+        "title": "设置",
+        "hasLlm": true,
+        "hasSearch": true,
+        "hasOffline": true,
+        "hasProxy": true,
+        "hasImport": false,
+        "formInputs": 10
+      }
+    },
+    "Monitor": {
+      "issues": [
+        "监控页面无明显指标"
+      ],
+      "data": {
+        "__error": "eval timeout"
+      }
+    },
+    "Discuss": {
+      "issues": [],
+      "data": {
+        "__error": "eval timeout"
+      }
+    },
+    "Report": {
+      "issues": [],
+      "notfound": {
+        "__error": "eval timeout"
+      },
+      "failed": {
+        "__error": "eval timeout"
+      }
+    },
+    "Compare": {
+      "issues": [],
+      "data": {
+        "__error": "eval timeout"
+      }
+    },
+    "Readme": {
+      "issues": [],
+      "data": {
+        "__error": "eval timeout"
+      }
+    },
+    "Faq": {
+      "issues": [],
+      "data": {
+        "__error": "eval timeout"
+      }
+    },
+    "AuthCallback": {
+      "issues": [],
+      "data": {
+        "__error": "eval timeout"
+      }
+    }
+  },
+  "consoleErrors": [],
+  "ts": "2026-09-26T09:29:41.997Z"
+}

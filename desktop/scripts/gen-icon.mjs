@@ -1,8 +1,11 @@
 /**
  * 生成 InsightForge 应用图标 (build/icon.png, 512x512)
- * 纯 Node 实现: 像素绘制 + zlib 压缩手写 PNG 编码, 无第三方依赖
  *
- * 图案: 深蓝渐变背景 + 放大镜(洞察) + 上升趋势线(市场增长)
+ * v1.8 P10-A 整合:
+ *   - 优先从 ../website/public/logo.png 复制(单一品牌来源, 与营销网站完全一致)
+ *   - 缺失时回退到 SDF 自绘: 像素绘制 + zlib 压缩手写 PNG 编码, 无第三方依赖
+ *   - 图案: 深蓝渐变背景 + 放大镜(洞察) + 上升趋势线(市场增长)
+ *
  * 用法: node scripts/gen-icon.mjs
  */
 import fs from 'node:fs';
@@ -11,13 +14,41 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SIZE = 512;
+
+// ---------- 解析路径 ----------
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const CANDIDATES = [
+  path.join(PROJECT_ROOT, 'website', 'public', 'logo.png'),
+  path.join(PROJECT_ROOT, 'frontend', 'public', 'logo.png'),
+];
+const OUT_DIR = path.join(__dirname, '..', 'build');
+const OUT_PATH = path.join(OUT_DIR, 'icon.png');
+
+// ---------- 优先: 复制外部 logo.png ----------
+const explicitSrc = process.env.INSIGHTFORGE_LOGO_SRC;
+if (explicitSrc && fs.existsSync(explicitSrc)) {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.copyFileSync(explicitSrc, OUT_PATH);
+  console.log(`✅ 已从 ${explicitSrc} 复制品牌 logo → ${OUT_PATH}`);
+  process.exit(0);
+}
+
+for (const cand of CANDIDATES) {
+  if (fs.existsSync(cand)) {
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    fs.copyFileSync(cand, OUT_PATH);
+    console.log(`✅ 已从 ${cand} 复制品牌 logo → ${OUT_PATH}`);
+    process.exit(0);
+  }
+}
+
+console.log('ℹ️  未发现外部 logo.png,回退到 SDF 自绘 (放大镜+折线图)');
 
 // ---------- 颜色工具 ----------
+const SIZE = 512;
 function lerp(a, b, t) {
   return a + (b - a) * t;
 }
-
 function lerpColor(c1, c2, t) {
   return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)];
 }
@@ -168,8 +199,6 @@ for (let y = 0; y < SIZE; y++) {
   }
 }
 
-const outDir = path.join(__dirname, '..', 'build');
-fs.mkdirSync(outDir, { recursive: true });
-const outPath = path.join(outDir, 'icon.png');
-fs.writeFileSync(outPath, encodePng(SIZE, SIZE, rgba));
-console.log(`✅ 图标已生成: ${outPath}`);
+fs.mkdirSync(OUT_DIR, { recursive: true });
+fs.writeFileSync(OUT_PATH, encodePng(SIZE, SIZE, rgba));
+console.log(`✅ 图标已生成: ${OUT_PATH}`);
