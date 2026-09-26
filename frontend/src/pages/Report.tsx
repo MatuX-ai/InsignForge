@@ -707,6 +707,32 @@ export function Report() {
     }
   };
 
+  // v1.8 P4-B: 复制桌面应用深链 insightforge://report/<projectId>
+  // 桌面版安装后,点击该链接会被 Electron 拉起并跳转到本报告页。
+  // Web 端点击会触发"选择应用"对话框,提示安装桌面版。
+  const copyDeepLink = async () => {
+    if (!id) return;
+    const deepLink = `insightforge://report/${id}`;
+    try {
+      await navigator.clipboard.writeText(deepLink);
+    } catch {
+      // 降级到 textarea + execCommand
+      const ta = document.createElement('textarea');
+      ta.value = deepLink;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(ta);
+      }
+    }
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
+
   // 生成二维码(使用公共 API 的 data URL 方案,纯前端不依赖外部)
   // 这里用简单的文本分享链接方式,实际二维码可用 qrcode.js 库
   const shareLink = async () => {
@@ -1646,7 +1672,9 @@ export function Report() {
                 实现思路:
                   - 主文本直接 LLM 原文
                   - 在右侧/下方浮一个"📌 数据范围"提示卡,显式声明估算口径
-                  - 数字粒度提示:含"亿/万/¥/$/%/千/百万"等单位关键字时打勾,缺单位时给警告 */}
+                  - 数字粒度提示:含"亿/万/¥/$/%/千/百万"等单位关键字时打勾,缺单位时给警告
+                v1.8 P4-A 增强: 文本下方追加"📊 推断详情"行,枚举检测到的币种 / 年份 / 量级 token,
+                  把抽象的"是否含单位"变成"具体检测到 USD / 2026 / 亿", 读者一眼看到锚点。 */}
             {(() => {
               const text = currentReport.market_size ?? '';
               // v1.7 WARN-02 增强: 涵盖更多单位变体 + 前后修饰
@@ -1659,10 +1687,68 @@ export function Report() {
               const YEAR_PATTERN = /(?:20\d{2}|19\d{2})/;
               const hasUnit = UNIT_PATTERN.test(text);
               const hasYear = YEAR_PATTERN.test(text);
+              // v1.8 P4-A: 枚举检测到的 token,把抽象"是否含单位"具象化为具体锚点
+              const CURRENCY_PATTERN =
+                /(?:人民币|美元|美金|日元|欧元|英镑|港币|RMB|USD|JPY|EUR|GBP|HKD|CNY)/gi;
+              const SCALE_PATTERN =
+                /(?:万亿|十亿|百亿|千亿|百万|千万|亿|万|billion|million|trillion|[kKmMbB]\b)/g;
+              const GROWTH_PATTERN = /(?:CAGR|YoY|年增|年化|同比增长|复合增长)/gi;
+              const currencies = Array.from(new Set(text.match(CURRENCY_PATTERN) ?? []));
+              const scales = Array.from(new Set((text.match(SCALE_PATTERN) ?? []).map((s) => s.toLowerCase())));
+              const years = Array.from(new Set(text.match(/\b(?:20\d{2}|19\d{2})\b/g) ?? []));
+              const growths = Array.from(new Set(text.match(GROWTH_PATTERN) ?? []));
+              const detectedCount = currencies.length + scales.length + years.length + growths.length;
               return (
                 <section id="section-market-size" className="mt-10 pt-8 border-t border-border/30">
                   <Card title="市场规模估算">
                     <p className="text-body leading-relaxed">{text}</p>
+                    {/* v1.8 P4-A: 推断详情 — 把"是否含单位"具象化为实际锚点, 让读者一眼看到"已含 USD/2026/亿" */}
+                    {text.trim() && detectedCount > 0 && (
+                      <div className="mt-3 text-helper text-text-secondary flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span aria-hidden className="opacity-70">📊</span>
+                        <span>检测到</span>
+                        {currencies.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-text-primary">
+                            <span className="text-text-tertiary">币种</span>
+                            {currencies.map((c, i) => (
+                              <span key={i} className="px-1.5 py-0.5 rounded bg-primary/15 text-primary-light border border-primary/30 text-helper">
+                                {c}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                        {scales.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-text-primary">
+                            <span className="text-text-tertiary">量级</span>
+                            {scales.map((s, i) => (
+                              <span key={i} className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 text-helper">
+                                {s}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                        {years.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-text-primary">
+                            <span className="text-text-tertiary">年份</span>
+                            {years.map((y, i) => (
+                              <span key={i} className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-helper">
+                                {y}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                        {growths.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-text-primary">
+                            <span className="text-text-tertiary">增长</span>
+                            {growths.map((g, i) => (
+                              <span key={i} className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-helper">
+                                {g}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {/* 数据范围提示卡: 让读者一眼看到"这是哪一年 / 什么币种 / 什么口径" */}
                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <RangeChip
@@ -2119,6 +2205,11 @@ export function Report() {
                       {
                         label: '🔗 复制链接',
                         onClick: shareLink,
+                      },
+                      {
+                        // v1.8 P4-B: 桌面应用深链 - 安装桌面版后点击会拉起应用跳转到本报告页
+                        label: copySuccess ? '✓ 已复制!' : '🚀 复制桌面深链',
+                        onClick: () => void copyDeepLink(),
                       },
                       {
                         label: '🖨️ 打印报告',

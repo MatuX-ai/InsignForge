@@ -144,6 +144,9 @@ ipcMain.handle('desktop:copy', async (_event, text) => {
 /** 单实例锁: 防止重复启动 */
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  // v1.8 P4-B: 第二个实例被主实例接管前,主实例会通过 'second-instance' 事件收到本实例的 argv.
+  // 这里不直接退出,等待主实例处理完,我们再 quit() —— 避免主实例深链处理早于本进程退出。
+  // 但为稳妥,仍调 app.quit(),Electron 会延迟到主实例 'second-instance' 回调返回后才退出。
   app.quit();
 }
 
@@ -589,6 +592,214 @@ function setupTray() {
   }
 }
 
+/** v1.8 P4-B: 注册自定义协议 insightforge://
+ *  让报告分享链接 (`insightforge://report/<projectId>`) 可以从浏览器/聊天软件点击直接拉起桌面应用。
+ *  - Windows / Linux: 由 OS 拉起时把 URL 放在 process.argv,需要在 ready 后调一次
+ *  - macOS: 通过 'open-url' 事件拿,需在 'will-finish-launching' 之前注册才能捕获冷启动 URL
+ */
+const INSIGHTFORGE_SCHEME = 'insightforge';
+function registerInsightforgeScheme() {
+  if (process.defaultApp) {
+    // 开发模式: electron . 路径需要传 process.execPath + 入口脚本,否则 OS 找不到
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(INSIGHTFORGE_SCHEME, process.execPath, [
+        path.resolve(process.argv[1]),
+      ]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(INSIGHTFORGE_SCHEME);
+  }
+}
+
+/** v1.8 P4-B: 从 insightforge://xxx 中抽路由(path)部分。
+ *  返回 null 表示不是有效协议 URL。
+ *  示例:
+ *    insightforge://report/abc-123   → '/report/abc-123'
+ *    insightforge:///history          → '/history'
+ *    insightforge://action/new?topic=x → '/action/new?topic=x'
+ */
+function parseInsightforgeDeepLink(url) {
+  if (typeof url !== 'string') return null;
+  const prefix = `${INSIGHTFORGE_SCHEME}://`;
+  if (!url.startsWith(prefix)) return null;
+  // 去掉 scheme://host 部分,host 部分是 host header (例 report / history / discuss)
+  // URL.pathname 不包含 host 部分,需手动剥离
+  let rest = url.slice(prefix.length);
+  // 协议 URL 的 host 不允许包含路径分隔符,但我们的用法是 host = 第一个段、后续 = 路径
+  // 例 insightforge://report/abc-123  →  host='report' path='/abc-123'
+  //    insightforge://history          →  host='history' path=''
+  // 这里拼接为 '/host[/rest]'
+  // 简单划分: 找到第一个 '/'
+  const slashIdx = rest.indexOf('/');
+  let route;
+  if (slashIdx < 0) {
+    route = `/${rest}`;
+  } else {
+    route = `/${rest.slice(0, slashIdx)}${rest.slice(slashIdx)}`;
+  }
+  // 清理可能的多余斜杠
+  if (route.length > 1 && route.endsWith('/')) route = route.slice(0, -1);
+  // 仅接受以 / 开头的内部路由
+  return route.startsWith('/') ? route : null;
+}
+
+/** v1.8 P4-B: 在 BrowserWindow 创建后,向渲染进程广播路由跳转 */
+function dispatchDeepLinkToRenderer(route) {
+  if (!route) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('desktop:navigate', route);
+  }
+}
+
+/** v1.8 P4-C: 首屏加载窗口
+ *  - 窗口尺寸 460x300, 不可关闭(alwaysOnTop), 无菜单
+ *  - 加载一个 data: URL 的 HTML(避免依赖外部资源)
+ *  - 进度状态通过 webContents.send 推送,前端 JS 更新文字
+ *  - 主窗口就绪后调用 closeSplashWindow() 关闭
+ */
+let splashWindow = null;
+let splashReadyResolve = null;
+const splashReadyPromise = new Promise((resolve) => { splashReadyResolve = resolve; });
+
+function createSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) return;
+  const iconPath = resolveWindowIcon();
+  const html = buildSplashHtml();
+  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  splashWindow = new BrowserWindow({
+    width: 460,
+    height: 300,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#0F172A',
+    title: 'InsightForge',
+    icon: iconPath,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // splash HTML 在 data: 域下加载,不需要 preload
+    },
+  });
+  // 拦截外部跳转
+  splashWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  splashWindow.webContents.on('will-navigate', (e) => e.preventDefault());
+  // 页面 DOM ready 后标记 splash JS 已注册 IPC 监听
+  splashWindow.webContents.on('did-finish-load', () => {
+    splashReadyResolve?.();
+  });
+  splashWindow.on('closed', () => {
+    splashWindow = null;
+  });
+  splashWindow.once('ready-to-show', () => {
+    splashWindow?.show();
+  });
+  splashWindow.loadURL(dataUrl);
+}
+
+function closeSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try {
+      splashWindow.close();
+    } catch (err) {
+      console.warn(`[desktop] 关闭 splash 窗口失败: ${err.message}`);
+    }
+  }
+  splashWindow = null;
+}
+
+/** v1.8 P4-C: 更新 splash 阶段提示。
+ *  阶段: 'starting' | 'backend' | 'openserp' | 'ready'
+ */
+function updateSplashStage(stage, detail) {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  // data URL 不支持 IPC,需要走 webContents.executeJavaScript 直接改 DOM
+  const safeDetail = JSON.stringify(detail ?? '');
+  const js = `(function(){try{
+    const stageEl=document.getElementById('if-stage-text');
+    const detailEl=document.getElementById('if-stage-detail');
+    const bar=document.getElementById('if-progress-bar');
+    const map={starting:1,backend:2,openserp:3,ready:4};
+    const pct=map['${stage}']?map['${stage}']*25:0;
+    if(stageEl)stageEl.textContent=${JSON.stringify(stageLabel(stage))};
+    if(detailEl)detailEl.textContent=${safeDetail};
+    if(bar)bar.style.width=pct+'%';
+  }catch(e){}})()`;
+  splashWindow.webContents.executeJavaScript(js).catch(() => {});
+}
+
+function stageLabel(stage) {
+  switch (stage) {
+    case 'starting': return '启动中';
+    case 'backend': return '加载本地后端';
+    case 'openserp': return '准备搜索引擎';
+    case 'ready': return '就绪';
+    default: return '启动中';
+  }
+}
+
+/** v1.8 P4-C: splash HTML 内容(独立内联,不依赖外部资源) */
+function buildSplashHtml() {
+  return `<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8" />
+<title>InsightForge</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; }
+  body {
+    background: radial-gradient(circle at 30% 0%, #1e293b 0%, #0f172a 70%);
+    color: #E2E8F0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    -webkit-user-select:none; user-select:none;
+  }
+  .logo {
+    width: 64px; height: 64px; border-radius: 16px;
+    background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 32px; font-weight: 700; color: #fff;
+    box-shadow: 0 8px 32px rgba(56,189,248,0.35);
+    margin-bottom: 18px;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+  }
+  h1 { margin:0; font-size:18px; font-weight:600; color:#F1F5F9; letter-spacing:1px;}
+  .subtitle { font-size:12px; color:#94A3B8; margin-top:4px; letter-spacing:0.5px;}
+  .progress {
+    margin-top:24px; width: 320px; height: 4px; background: rgba(148,163,184,0.18);
+    border-radius: 999px; overflow:hidden;
+  }
+  #if-progress-bar {
+    height:100%; width:0%; background: linear-gradient(90deg, #38bdf8, #6366f1);
+    border-radius: 999px; transition: width 0.35s ease-out;
+  }
+  .stage { margin-top:12px; font-size:13px; color:#E2E8F0; }
+  .stage-detail { margin-top:4px; font-size:11px; color:#64748B; min-height:14px;}
+  .hint { position:absolute; bottom:12px; right:14px; font-size:10px; color:#475569;}
+</style>
+</head><body>
+  <div class="logo">IF</div>
+  <h1>InsightForge</h1>
+  <div class="subtitle">一个想法 → 5 分钟拿到市场报告</div>
+  <div class="progress"><div id="if-progress-bar"></div></div>
+  <div class="stage" id="if-stage-text">启动中</div>
+  <div class="stage-detail" id="if-stage-detail">正在装载本地资源…</div>
+  <div class="hint">v1.8</div>
+</body></html>`;
+}
+
 /** 创建主窗口 */
 function createWindow(port) {
   const iconPath = resolveWindowIcon();
@@ -601,6 +812,7 @@ function createWindow(port) {
     title: 'InsightForge',
     icon: iconPath,
     autoHideMenuBar: false,
+    show: false, // v1.8 P4-C: 首屏 loading 窗口准备好后再 show,避免空白闪烁
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -757,6 +969,13 @@ async function bootstrap() {
     app.setAppUserModelId('ai.insightforge.desktop');
   }
 
+  // v1.8 P4-B: 注册自定义协议 insightforge://
+  registerInsightforgeScheme();
+
+  // v1.8 P4-C: 先弹首屏 loading 窗口,避免主窗口背景色闪烁
+  createSplashWindow();
+  updateSplashStage('starting', '准备进程…');
+
   // 统一下载处理: 报告 / 开发文档 / 落地页等文件保存
   // (商业计划书不再走 HTTP 下载,改为走 IPC save-dir 弹目录对话框另存)
   setupDownloadHandler();
@@ -766,20 +985,57 @@ async function bootstrap() {
   setupApplicationMenu();
   setupTray();
 
+  // v1.8 P4-C: splash 阶段切换 - 后端启动
+  updateSplashStage('backend', '装载本地后端…');
+  // 不死等 splash 加载,3s 超时后强制推进后端启动(避免网络受限导致 loading 窗口卡住)
+  await Promise.race([
+    splashReadyPromise,
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]);
+
   const entry = resolveBackendEntry();
   if (!fs.existsSync(entry)) {
+    updateSplashStage('ready', '未检测到后端, 进入资源未就绪页');
+    closeSplashWindow();
     showResourceNotReadyPage('后端入口文件未找到, 请先构建桌面版资源。');
     return;
   }
 
   const handle = startBackend();
-  if (!handle) return;
+  if (!handle) {
+    closeSplashWindow();
+    return;
+  }
   backendProc = handle.child;
+
+  // v1.8 P4-C: 监听后端日志,看是否启动 OpenSerp
+  handle.child.stderr?.on('data', () => updateSplashStage('backend', '后端初始化中…'));
+  handle.child.stdout?.on('data', (chunk) => {
+    const text = chunk.toString('utf8');
+    if (/openserp|OPENSERP/i.test(text)) updateSplashStage('openserp', '准备搜索引擎容器…');
+  });
 
   try {
     const port = await waitBackendReady(handle.child);
     console.log(`[desktop] 后端就绪, 端口=${port}`);
+    updateSplashStage('ready', '即将进入主界面…');
+
+    // 主窗口准备好后再关闭 splash,避免主窗口空白闪烁
     createWindow(port);
+    // 等主窗口首次 paint 再关闭 splash
+    await new Promise((resolve) => {
+      if (!mainWindow) return resolve();
+      if (mainWindow.webContents.isLoading()) {
+        mainWindow.webContents.once('did-finish-load', resolve);
+      } else {
+        resolve();
+      }
+    });
+    // 短延 200ms 避免 splash 关得太突兀,给主窗口一点入场感
+    setTimeout(() => {
+      mainWindow?.show();
+      closeSplashWindow();
+    }, 200);
 
     // v1.7+: OpenSerp 就绪后主动重置 backend 的 openserp 熔断器。
     // 启动期后端可能已经连续失败(OpenSerp 还没起来)把熔断打到了 open。
@@ -797,16 +1053,66 @@ async function bootstrap() {
       });
   } catch (err) {
     console.error(`[desktop] 启动失败: ${err.message}`);
-    showResourceNotReadyPage(`后端启动失败: ${err.message}`);
+    updateSplashStage('ready', `启动失败: ${err.message}`);
+    setTimeout(() => {
+      closeSplashWindow();
+      showResourceNotReadyPage(`后端启动失败: ${err.message}`);
+    }, 800);
   }
 }
 
-app.whenReady().then(bootstrap);
+/** v1.8 P4-B: 从 process.argv 中找第一个 insightforge:// 开头的 URL(Windows/Linux 单实例复用场景) */
+function extractDeepLinkFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const arg of argv) {
+    if (typeof arg === 'string' && arg.startsWith(`${INSIGHTFORGE_SCHEME}://`)) {
+      return arg;
+    }
+  }
+  return null;
+}
 
-app.on('second-instance', () => {
+// 第二次启动: 主实例收到本实例的 argv 携带的深链,转发给 BrowserWindow 处理
+// (复用 v1.7+ 已有的单实例锁, 不重复调用 requestSingleInstanceLock)
+app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+  }
+  const deepLink = extractDeepLinkFromArgv(argv);
+  if (deepLink) {
+    const route = parseInsightforgeDeepLink(deepLink);
+    if (route) dispatchDeepLinkToRenderer(route);
+  }
+});
+
+// v1.8 P4-B: macOS 冷启动 / 热启动深链
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  const route = parseInsightforgeDeepLink(url);
+  if (!route) return;
+  // app 已 ready 才能向 BrowserWindow 推送,否则先暂存到 bootstrap
+  if (app.isReady() && mainWindow) {
+    dispatchDeepLinkToRenderer(route);
+  } else {
+    // 暂存,在 createWindow 后补发
+    pendingDeepLinkRoute = route;
+  }
+});
+
+/** v1.8 P4-B: 暂存冷启动 deep link(等 BrowserWindow 创建后补发) */
+let pendingDeepLinkRoute = null;
+
+app.whenReady().then(bootstrap).then(() => {
+  if (pendingDeepLinkRoute) {
+    dispatchDeepLinkToRenderer(pendingDeepLinkRoute);
+    pendingDeepLinkRoute = null;
+  }
+  // bootstrap 完成后再扫一遍 argv(Windows 启动时直接附带深链的场景)
+  const directLink = extractDeepLinkFromArgv(process.argv);
+  if (directLink) {
+    const route = parseInsightforgeDeepLink(directLink);
+    if (route) dispatchDeepLinkToRenderer(route);
   }
 });
 

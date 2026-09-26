@@ -11,6 +11,17 @@ appId: ai.insightforge.desktop
 productName: InsightForge
 copyright: Copyright © 2026 InsightForge
 
+# v1.8 P4-B: 声明 insightforge:// 自定义协议。
+#   - Windows: electron-builder 在 NSIS 安装完成后写入
+#     HKCU\Software\Classes\<scheme>\shell\open\command 键值,
+#     由 OS 在收到 insightforge://xxx URL 时拉起我们的 desktop app.
+#   - macOS: Info.plist 注入 CFBundleURLTypes(electron-builder 自动处理).
+#   - Linux: 生成 .desktop 文件 + MIME type x-scheme-handler/insightforge.
+protocols:
+  - name: InsightForge Deep Link
+    schemes:
+      - insightforge
+
 directories:
   # NSIS / portable 安装包统一输出到项目根 RELEASE/ 目录,
   # 不再使用 desktop/dist/; 后端与 rcedit 嵌入脚本路径见 desktop/build.mjs。
