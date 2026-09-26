@@ -1,3 +1,15 @@
+# InsightForge v1.8.1 (文档同步 · 版本号统一 · 发布资产)
+
+> v1.8.0 的里程碑式发版后,后续 3 个 commit 完成了 BUG-01 修复与品牌资产统一。
+> 本次发版将这 3 个 commit 合并发布为 v1.8.1,同时把仓库内散落的版本号统一到 1.8.1。
+
+## v1.8.1 增量
+
+- `02d70aa` P11:BUG-01 修复(MISSING_API_KEY 弹窗) + DeepSeek 模型配置 + 全 Provider 接口同步
+- `480b6b3` P12:桌面端无边框窗口自定义顶栏 + 品牌 Logo 统一来源
+- 本次发版附带完成:版本号统一(根/frontend/backend/desktop/website)、release-notes 补齐 P10-P12、
+  README 补齐 P11+P12、AUDIT 报告 5.2 节 Aggregator.test.ts 预存量问题已修(8/8 PASS)
+
 # InsightForge v1.8.0 (桌面端深度集成 · 数据可视化 · 项目快照导入导出)
 
 ## 背景
@@ -132,6 +144,115 @@ v1.7 在中文源接入上完成了「数据可达性」,v1.8 将 v1.7 引入的
 
 - `desktop/main.cjs`(+186):下载用 `dialog.showSaveDialog` 原生保存,导入用 `dialog.showOpenDialog` + `.insightforge` 过滤
 - 历史页头部新增「📥 导入快照」按钮,与项目卡片「📦 导出快照」按钮对称
+
+## P10 — 文档同步 + 版本号 1.8.0 + Aggregator mock 闭环(commit `786a016`)
+
+> v1.8 里程碑发版准备,7 文件 / +473 / -13。详俌[P0-P9 完整 changelog](#p0--p1--p2--桌面端-ui-精雕细琢commit-71c1222)。
+
+- `release-notes.md`:顶部新增 v1.8.0 完整 changelog,覆盖 P0-P9 九轮迭代
+  (桌面端深度集成/数据可视化/项目快照导入导出/报告对比/批注/模板/标签/快捷键/移动端手势),含工程指标/兼容性/核对清单
+- `README.md`:同步版本号 `InsightForge-1.0.0  1.8.0`,章节数 `7  10`,
+  API 表格 +3 路由(快照下载/导入/讨论列表),技术栈表格更新,开发路线更新到 v1.8 当前 + v2.0 规划
+- `backend/frontend/desktop` 三处 `package.json` 版本号同步:
+  backend/frontend 1.7.0  1.8.0,desktop 0.1.15  0.2.0
+- `backend/tests/Aggregator.test.ts`:给 `SettingsService mock` 补上缺的 5 个导出
+  (`assertExternalApiAllowed` / `getProxyConfig` / `redactProxyUrl` / `getOfflineMode`),
+  修复 v1.7.1 离线模式 + 代理池接入后 vitest 报
+  'No export is defined' 的预存量报错
+  → 后端测试 `391/399  25 文件 / 399 测试 100% PASS`
+- `AUDIT-REPORT-v1.8.md`:v1.8 P0-P9 阶段验收审计报告,17 项原始建议 100% 落地
+
+## P11 — BUG-01 修复(MISSING_API_KEY 弹窗) + DeepSeek 模型配置 + 全 Provider 接口同步(commit `02d70aa`)
+
+> v1.8.0 发版后的 3 项后修复,86 文件 / +2644 / -119。
+
+### P11-A BUG-01 修复:MISSING_API_KEY 弹窗不弹出
+
+- **根因**:`ExecutionService.setErrorCode` 未持久化到 DB,前端只能依赖 trigger 阶段原句柄
+- `backend/src/db/schema.ts`:executions 表新增 `error_code VARCHAR(50) 列
+- `backend/src/db/index.ts`:新增 `ensureColumnIfMissing` 通用幂等迁移工具
+- `backend/src/services/ExecutionService.ts`:setErrorCode 改为 `UPDATE executions SET error_code`
+- `frontend/src/hooks/useResearch.ts`:trigger 阶段直接设置 `errorCode='MISSING_API_KEY'`
+  (避免用户刷新页面后才看到弹窗)
+- 验证脚本:`backend/scripts/{check-bug01-db,verify-bug01-frontend}.cjs`
+- 验证证据:
+  - DB 层:executions.error_code 列存在;新 execution 持久化 `MISSING_API_KEY`
+  - 前端层:`LlmSetupPrompt` 弹窗自动弹出
+    "未配置大模型 API Key | 检测到当前大模型 Provider(DeepSeek) 尚未配置 API Key"
+- 验证截图:`backend/tests/ux-screenshots/bug01-fix-*.png`(4 张证据)
+
+### P11-B DeepSeek 模型配置:deepseek-chat  deepseek-flash
+
+- **原因**:用户反馈 deepseek-chat 已于 2026-07-24 停用,需改为 deepseek-flash
+- 三个 `.env` 同步:`backend/.env` / `desktop/.env` / `.env.example`  `LLM_MODEL=deepseek-flash`
+- `desktop/data/.env` (新建):桌面端 dev 模式真正加载的隐藏路径
+  (desktop/main.cjs 通过 `DOTENV_CONFIG_PATH` 指向此文件;之前未建,导致后端 fallback 到 V4-Pro)
+- `backend/src/services/llm/providers.ts`:suggestedModels 中 `deepseek-v4-flash  deepseek-flash`
+- `frontend/src/lib/llmProviders.ts`:同步
+- `backend/tests/health.test.ts`:LLM_MODEL mock  `deepseek-flash`
+- `docker-compose.yml`:默认值同步
+- 验证:`GET /api/v1/settings/llm`  `{ model: 'deepseek-flash', baseUrl: 'https://api.deepseek.com/v1' }`
+
+### P11-C 全 Provider 接口同步(防止 API 404)
+
+- `backend/src/services/llm/providers.ts`:deepseek baseUrl 补 `/v1`
+  原值:`https://api.deepseek.com`  `https://api.deepseek.com/v1`
+  (OpenAI SDK 不自动加 /v1,否则请求锦到 `https://api.deepseek.com/chat/completions` 报 404)
+- `packages/core/src/llm.ts`:同步所有 11 家 provider 的 baseUrl + openai 补 `/v1`
+  修正两处不一致
+
+## P12 — 桌面端无边框窗口自定义顶栏 + 品牌 Logo 统一来源(commit `480b6b3`)
+
+> 桌面端品牌资产统一 + 原生窗口控制权归还用户。61 文件 / +2358 / -5251。
+
+### 桌面端无边框顶栏 (FramelessTopBar)
+
+- `desktop/main.cjs`:
+  - `BrowserWindow` 启用 `frame: false` + `autoHideMenuBar: true`,彻底去除系统标题栏
+  - 新增 `registerWindowControlsIpc()`,注册 `window:minimize` / `window:toggle-maximize` /
+    `window:is-maximized` / `window:close` 四个 IPC handler
+  - 新增 `broadcastMaximizeState()`,在 `maximize` / `unmaximize` 事件触发时
+    主动推送状态到渲染进程,UI 实时同步图标
+- `desktop/preload.cjs`:通过 `contextBridge` 暴露 `windowControls` 子对象,含
+  `minimize / toggleMaximize / isMaximized / close / onMaximizeChange`,严格类型化
+- `frontend/src/types/index.ts`:`Window.insightforge` 接口增加 `windowControls` 字段,
+  Web 端类型 stub 由 `useDesktopApi` 提供
+- `frontend/src/hooks/useDesktopApi.ts`:`DesktopApi` 接口 + `WEB_STUB` 同步新增,
+  Web 端调用全部 no-op
+- `frontend/src/components/TopBar.tsx`(重写,441 行):
+  - 按 `isDesktop` 分支:`FramelessTopBar`(桌面端) / `WebTopBar`(Web 端)
+  - 桌面端组件:LogoMark + 应用名 + 水平菜单(文件/视图/设置/帮助) + 主导航
+    (首页/梳理/历史/设置/监控,带 emoji 图标) + 版本信息 + 窗口控制按钮
+  - 应用名渐变 `linear-gradient(90deg, #818CF8 0%, #A78BFA 50%, #22D3EE 100%)`,
+    与营销 website `.gradient-text` 完全同色板
+  - `-webkit-app-region: drag` 顶层 / `no-drag` 给所有按钮/菜单/导航项,
+    既能拖动窗口又不吞点击
+
+### 品牌 Logo 统一来源 (Single Source of Truth)
+
+- `frontend/public/logo.png`(新):从 `website/public/logo.png` 复制,SHA256 `4B563824...`
+- `desktop/resources/frontend-dist/logo.png`(新):Vite build 自动拷入 dist
+- `desktop/build/icon.png`(替换):与 website logo 完全一致,三处 SHA256 相同
+- `desktop/scripts/gen-icon.mjs`(重构,47 行):
+  - 优先 `INSIGHTFORGE_LOGO_SRC` 环境变量  `website/public/logo.png`  `frontend/public/logo.png`,命中即 `fs.copyFileSync` 退出
+  - 三处都没有时回退到原 SDF 自绘(放大镜 + 折线图),保持打包可用
+- `desktop/resources/backend/package-lock.json` 加入 `.gitignore`:
+  该 lock 复制自 backend/ 根 lock,不需要双份入库
+
+### 测试资产 (BUG-01 Puppeteer 证据链)
+
+- `backend/scripts/check_db.cjs`(新):SQLite 数据校验脚本
+- `backend/scripts/verify-bug01-fix.cjs`(新):BUG-01 修复端到端验证
+- `backend/scripts/ux-test-{home,desktop,pages,pages2}.cjs`(新):Puppeteer UX 验证
+- `backend/tests/ux-screenshots/`(新,38 文件):BUG-01 修复前后截图证据,
+  与 Puppeteer 弹窗验证脚本配套
+
+### 工程改进
+
+- `.gitignore` 补充:`tests/*.ps1` / `tests/*.log` / `tests/*.png` /
+  `tests/ux-screenshots/` 一并忽略,临时调试目录不再误入仓库
+- dist 资源同步:`frontend/dist` 重建后 1:1 同步到 `desktop/resources/frontend-dist`,
+  旧 hash `index-BFMGTTPN.css` / `index-BT1zMOJe.js` 清理
 
 ## 工程指标
 

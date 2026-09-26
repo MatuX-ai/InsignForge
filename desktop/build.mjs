@@ -83,33 +83,38 @@ if (fs.existsSync(iconIcoPath)) {
 }
 
 // ---------- 递增版本号 (仅 --dist 模式) ----------
-// 版本号规则: major.minor.PATCH
-//   - PATCH 为两位数(00~99),每次 --dist 打包 +1
-//   - 当 PATCH 越过 99 时回零,minor +1,尾数补零保持两位
-//   - 起始版本 0.1.00
+// 版本号规则: 适配标准 semver major.minor.patch
+//   - 默认不 bump(在 --dist 模式下保留原 version 以便与 README/release-notes 一致)
+//   - 如需强制 bump,传递环境变量 FORCE_VERSION_BUMP=patch|minor|major
+//   - 起始版本允许从 0.x.x 过渡到 1.x.x 时不偏移 PATCH 位数
 if (process.argv.includes('--dist')) {
-  step('0.5/6 递增版本号');
+  step('0.5/6 处理版本号');
   const pkgPath = path.join(DESKTOP, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
 
-  const [maj, min, pat] = String(pkg.version).split('.').map((s) => Number.parseInt(s, 10));
-  // 容错: 任意一段不是合法数字,统一回退到 0.1.00
-  const isValid = [maj, min, pat].every(Number.isFinite);
-  const major = isValid ? maj : 0;
-  const minor = isValid ? min : 1;
-  const patch = isValid ? pat : 0;
-
-  let nextPatch = patch + 1;
-  let nextMinor = minor;
-  if (nextPatch > 99) {
-    nextPatch = 0;
-    nextMinor += 1;
+  const bumpMode = process.env.FORCE_VERSION_BUMP;
+  if (bumpMode) {
+    // 仅当显式要求 FORCE_VERSION_BUMP=patch|minor|major 时才递增
+    const [maj, min, pat] = String(pkg.version).split('.').map((s) => Number.parseInt(s, 10));
+    const isValid = [maj, min, pat].every(Number.isFinite);
+    if (!isValid) {
+      console.warn(`  ⚠️ 现有 version "${pkg.version}" 不是合法 semver,跳过 bump`);
+    } else {
+      let nextMaj = maj;
+      let nextMin = min;
+      let nextPat = pat;
+      if (bumpMode === 'major') { nextMaj = maj + 1; nextMin = 0; nextPat = 0; }
+      else if (bumpMode === 'minor') { nextMin = min + 1; nextPat = 0; }
+      else { nextPat = pat + 1; }
+      const newVersion = `${nextMaj}.${nextMin}.${nextPat}`;
+      console.log(`  ${pkg.version} → ${newVersion} (FORCE_VERSION_BUMP=${bumpMode})`);
+      pkg.version = newVersion;
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    }
+  } else {
+    // 默认 --dist 模式不 bump,保持当前 version(由人工在 release 准备阶段调整)
+    console.log(`  保持 version = ${pkg.version}(未设 FORCE_VERSION_BUMP)`);
   }
-
-  const newVersion = `${major}.${nextMinor}.${String(nextPatch).padStart(2, '0')}`;
-  console.log(`  ${pkg.version} → ${newVersion}`);
-  pkg.version = newVersion;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
 }
 
 // ---------- 编译 ----------
