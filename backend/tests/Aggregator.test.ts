@@ -57,9 +57,18 @@ vi.mock('../src/services/search/XiaohongshuClient.js', () => ({
 }));
 
 // SettingsService mock: 强制走 OpenSerp 路径,SerpApi 不被调用
+// v1.7.1 起 SettingsService 在搜索引擎路径选择时被调用以下 5 个导出:
+//   - getSearchProvider / getSearchApiKey (运行时分流)
+//   - getProxyConfig / redactProxyUrl     (FR-08 代理注入与日志脱敏)
+//   - assertExternalApiAllowed           (FR-18 离线模式守卫)
+// 测试 mock 必须提供这些导出,否则 vitest 报 "No 'X' export is defined" 错误。
 vi.mock('../src/services/SettingsService.js', () => ({
   getSearchProvider: () => 'openserp',
   getSearchApiKey: () => '',
+  getProxyConfig: () => undefined,
+  redactProxyUrl: (url: string) => url,
+  getOfflineMode: () => false,
+  assertExternalApiAllowed: () => undefined,
 }));
 
 import { Aggregator } from '../src/services/search/Aggregator.js';

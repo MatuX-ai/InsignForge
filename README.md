@@ -13,7 +13,7 @@
 ## 特性
 
 - **零云依赖**: 所有数据存储在本地 SQLite,无需注册任何平台
-- **极简操作**: 输入一句话想法,自动生成 7 章节市场报告
+- **极简操作**: 输入一句话想法,自动生成 10 章节市场报告
 - **智能聚合**: 集成 OpenSerp 搜索 + Reddit / Hacker News 社区讨论
 - **结构化报告**: 市场热度、竞品识别、用户痛点、市场规模、风险机会、数据来源
 - **多渠道分发**: Web(Docker)、桌面版(NSIS 安装包/便携版)、DeepSeek Harness 插件、MCP Server
@@ -26,8 +26,8 @@
 
 | 产物 | 说明 |
 |------|------|
-| `InsightForge-1.0.0-x64.exe` | NSIS 安装程序,支持选择安装目录、创建桌面/开始菜单快捷方式 |
-| `InsightForge-1.0.0-portable-x64.exe` | 便携版,双击直接运行,免安装 |
+| `InsightForge-1.8.0-x64.exe` | NSIS 安装程序,支持选择安装目录、创建桌面/开始菜单快捷方式 |
+| `InsightForge-1.8.0-portable-x64.exe` | 便携版,双击直接运行,免安装 |
 
 - 应用内置后端子进程,自动使用随机端口,不与本机其他服务冲突
 - 数据与配置写入用户目录(`%APPDATA%\InsightForge`),卸载/删除后不残留
@@ -124,7 +124,7 @@ npm run pack
 2. 在文本框中描述产品想法,例如:
    > 一个帮助程序员远程结对编程的 VS Code 插件
 3. 点击 **验证想法**,等待 2-5 分钟
-4. 浏览 7 章节结构化报告
+4. 浏览 10 章节结构化报告(执行摘要 / 可行性评分 / 行动建议 / 市场热度 / 竞品识别 / 竞品对比矩阵 / 用户痛点 / 市场规模 / 风险与机会 / 数据来源)
 5. (可选) 点击 **生成验证页** 获得可分享落地页
 
 ## API 接口
@@ -136,6 +136,9 @@ npm run pack
 | GET | `/api/v1/projects/:id/status` | 轮询调研状态 |
 | GET | `/api/v1/projects/:id/report` | 获取报告 |
 | POST | `/api/v1/projects/:id/landing` | 生成验证落地页(预留) |
+| GET | `/api/v1/projects/:id/insightforge/download` | 导出 `.insightforge` 项目快照 |
+| POST | `/api/v1/projects/import` | 导入 `.insightforge` 项目快照 |
+| GET | `/api/v1/projects/:id/discussions` | 列出项目历史讨论 |
 
 详细接口规范见 `docs/03-技术文档.md` §4.2。
 
@@ -146,9 +149,9 @@ npm run pack
 | 前端 | React 18 + Vite + Tailwind CSS + TypeScript |
 | 后端 | Node.js 22 + Express + TypeScript + better-sqlite3 |
 | 智能体 | Mastra (@mastra/core) |
-| 数据采集 | OpenSerp + Crawlee + Playwright |
-| 工作流 | Workflow Automation MVP (Express) |
+| 数据采集 | OpenSerp + Crawlee + Playwright + 知乎/掘金 |
 | 数据库 | SQLite (开发) / PostgreSQL (生产预留) |
+| 桌面 | Electron 33 + electron-builder 24 |
 | 部署 | Docker Compose |
 
 详细技术说明见 `docs/03-技术文档.md`。
@@ -166,10 +169,13 @@ npm run pack
 
 ## 开发路线
 
-- **v1.0 (当前 MVP)**: 核心闭环 - 想法输入 → 报告生成
-- **v1.1**: 数据可视化图表、Markdown/PDF 导出
-- **v1.2**: 自定义数据源、Ollama 本地模型
-- **v2.0**: 团队版、Casdoor 多用户
+- **v1.0 (MVP 已发版)**: 核心闭环 - 想法输入 → 报告生成
+- **v1.1**: 多场景文档生成(商业计划书/技术选型/前端设计/讨论协作)
+- **v1.2**: UX 优化 + 可访问性加固 + 设计系统语义化 token
+- **v1.3**: 采集引擎可靠性基座(重试/熔断/去重/缓存) + 健康检查 + Monitor
+- **v1.6 / v1.7 / v1.7.1**: 中文数据源接入(知乎/掘金) + 全面审计修复 + 离线模式 + 代理池
+- **v1.8 (当前)**: 桌面端深度集成(单实例/深度链接/原生对话框) + 数据可视化(雷达图/环形饼图) + 项目快照 `.insightforge` 导入导出 + 报告对比视图 + 我的模板 + 标签 + 快捷键 + 批注 + 移动端手势
+- **v2.0**: 团队版、Casdoor 多用户、快照加密与差量同步
 
 ## 许可证
 

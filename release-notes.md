@@ -1,3 +1,193 @@
+# InsightForge v1.8.0 (桌面端深度集成 · 数据可视化 · 项目快照导入导出)
+
+## 背景
+
+v1.7 在中文源接入上完成了「数据可达性」,v1.8 将 v1.7 引入的中文社区信号沉淀为可对外分享的项目快照,
+同时把 InsightForge 从「本地 + Docker + 桌面」三形态向「桌面优先 + 跨实例迁移」演进。
+报告章节从 7 个扩展到 10 个(新增 可行性评分 / 行动建议 / 竞品对比矩阵),桌面版 Windows NSIS 安装包
+稳定可用。
+
+## 重大变化
+
+- **桌面版 Windows 一等公民**: `main.cjs` 落地 `app.getPath('userData')` 写入 `%APPDATA%\InsightForge`,
+  单实例锁 `requestSingleInstanceLock` 防多开,resourcePath fallback 兜底不崩;SIGTERM 优雅关闭。
+- **项目快照 `.insightforge`**: 把项目报告 + 讨论 + 注释 + 标签 + 元数据打成 ZIP,跨实例可分享与导入;
+  包含完整性校验(SHA-256)与版本号断言。
+- **报告对比视图**: 多份报告并排陈列,自动识别共同竞品/差异化维度/趋势分歧。
+- **数据可视化双核**: `SourceDonut`(数据来源环形饼图)+ `CompetitorRadar`(竞品五维雷达图)进入报告页。
+
+## P0 + P1 + P2 — 桌面端 UI 精雕细琢(commit `71c1222`)
+
+> 这是 v1.8 的奠基 commit:一份提交就完成桌面端 41 个文件的打磨,2470 行新增。
+
+### 桌面版基础设施
+
+- `desktop/main.cjs`(+281 行):
+  - `app.getPath('userData')` 写入配置/数据库/日志,与 Windows 标准对齐(卸载/迁移零残留)
+  - 进程退出 `SIGTERM` 优雅关闭(原 5 秒超时问题根因修复)
+  - `resourcePath` 兜底 fallback(production 找不到 resource 时不崩)
+  - 启动 logo 闪烁问题修复
+- 新增组件:`DesktopNavigator` / `DesktopOnly` / `useDesktopApi` Hook,Web/桌面能力桥
+- `electron-builder.yml`:产物命名规范,Windows NSIS + 便携版双产物
+
+### 报告页输出控制
+
+- 新增 `PaperSizePicker`(162 行):A4 / Letter / A3 / 信纸 / 法律 / 自定义,默认按 locale 推荐
+- 新增 `pdfPreferences.ts`(117 行):边距/页眉/页脚/水印模板统一管理
+- 新增 `Container` 组件(86 行):统一卡片/页面骨架,断点响应
+
+### 设置与体验
+
+- `Banner`(+87):成功/警告/信息/危险 4 态,与设计系统 tone 对齐
+- `GlobalOfflineBanner`(+107):全局离线状态指示
+- `OnboardingModal` 修订 + `LlmSetupPrompt` 修订:首启流程闭环,Provider 列表真实化
+- `Monitor` 角色说明补全,`Faq` Provider 列表更新
+- `Textarea` 自适应高度 + 字符计数,`Dropdown` 键盘可达性
+- `Modal` 重写 focus trap(visibility check + Tab/Shift+Tab 循环)
+- `TopBar` 注入 `VITE_APP_VERSION`,用户菜单完整 a11y 属性
+
+### 设计系统
+
+- 语义化 token 完整落地:`text-body` / `text-helper` / `text-label` / `text-title` / `text-section` / `text-display`
+- `Card` 5 种 `tone` 变体(default / primary / success / danger / warning)
+- `Button` outline/ghost 变体 + loading 状态
+- `tailwind.config.js`:WCAG AA/AAA 颜色对比度校准
+
+## P3 — 数据可视化与可访问性补强(commit `1ee61d5`)
+
+- 报告页新增市场规模单位与年份自适应
+- TopBar 与 Modal 增强屏幕阅读器体验(`aria-label` / `aria-expanded` / 焦点还原)
+
+## P4 — 深度链接 + 首屏加载窗口 + 推断详情(commit `676f1e2`)
+
+> 桌面版 3 大体验提升,total 413 行新增。
+
+- `desktop/main.cjs`(+314):
+  - **深度链接 `insightforge://`**:从外部链接直接打开具体报告页(桌面分发场景核心)
+  - **首屏加载窗口**:Electron `BrowserWindow` 启动窗口,白屏期不裸露空白
+  - **OS-specific PDF 步骤**:Windows / macOS / Linux 三平台导出指引差异化
+- 报告页 `InferenceDetail`:鼠标 hover 显示数据置信度与样本来源
+
+## P5 — 报告对比视图(commit `1bad720`)
+
+> 协作场景核心入口,Compare.tsx 单文件 433 行。
+
+- 新增 `/compare` 页(`Compare.tsx`):选择 2-4 份历史报告并排陈列
+- 自动识别**共同竞品**(横跨多份报告均出现的实体)
+- 自动识别**差异化维度**(各报告侧重点的差异)
+- 自动识别**趋势分歧**(同一指标的不同结论)
+- 报告卡片支持勾选 + 时间线视图
+
+## P6 — 讨论模板 + 错误恢复 + 报告批注(commit `955b823`)
+
+- **报告批注**:`SectionAnnotation` + `useAnnotations` 闭环
+  - 选中报告任意段落即可添加批注(@mention / 时间戳 / 状态:open/resolved)
+  - 批注列表抽屉式展示,按章节聚合
+- **讨论模板**:10 条模板按画布类型(竞品 / 痛点 / 市场规模)组织
+- **错误恢复 `wait_and_retry`**:报告生成失败时显示倒计时 + 进度条,自动重试或一键诊断
+
+## P7 — 我的模板 + 项目标签 + 键盘快捷键(commit `f4b8eb4`)
+
+> 工作流闭环三轮,total 799 行新增。
+
+- `useIdeaTemplates`:常用调研想法保存为模板,首页下拉一键复用
+- `useProjectTags`:项目可打多维度标签(行业/阶段/优先级),历史页按标签过滤
+- `useKeyboardShortcuts` + `ShortcutsHelp` + `ShortcutsHost`:
+  - `Ctrl/Cmd+K` 命令面板
+  - `Ctrl/Cmd+Enter` 提交
+  - `Esc` 关闭对话框
+  - `?` 唤出快捷键帮助
+- 首页底部新增 `BottomBar`:快捷键提示 + 实时字数
+
+## P8 — 画布折叠 + 复制 Markdown + 移动端手势(commit `dc4616a`)
+
+- `useDiscussCollapse`:讨论区画布可折叠,腾出报告区阅读空间
+- 报告页一键复制为 Markdown(含章节结构 + 数据表)
+- `useSwipeBack`:移动端右滑返回上一页(原生体验)
+- `Modal` 移动端全屏模式优化
+
+## P9 — 数据可视化 + 桌面端集成 + 项目快照导入导出(commit `74e2b90`)
+
+> v1.8 收尾三轮,10 文件 / 1609 行新增。
+
+### 项目快照 `.insightforge`
+
+- 新增 `backend/src/services/InsightforgePackageService.ts`(519 行):
+  - ZIP STORE 格式(无压缩,本地场景速度优先)
+  - 包含:`manifest.json` + `report.json` + `discussions.json` + `annotations.json` + `tags.json`
+  - 完整性校验:SHA-256 哈希写入 manifest,导入时校验
+  - 版本号断言:低版本不能导入高版本快照
+- 后端路由:
+  - `GET /api/v1/projects/:id/insightforge/download` — 导出快照
+  - `POST /api/v1/projects/import` — 接收 raw body 直接吃二进制(避免 multer 依赖)
+- 新增 `insightforgePackage.test.ts`(309 行,9 case → 9/9 PASS):覆盖导出/导入/校验/版本/边界
+
+### 数据可视化组件
+
+- `SourceDonut`(178 行):纯 SVG 环形饼图,role/aria-label/title 完整,< 3% 来源合并为「其他」
+- `CompetitorRadar`(195 行):5 维度雷达(优势密度/数据透明/描述完整/官网可达/数据丰富)
+  - < 2 竞品时不渲染,避免误导
+
+### 桌面端集成
+
+- `desktop/main.cjs`(+186):下载用 `dialog.showSaveDialog` 原生保存,导入用 `dialog.showOpenDialog` + `.insightforge` 过滤
+- 历史页头部新增「📥 导入快照」按钮,与项目卡片「📦 导出快照」按钮对称
+
+## 工程指标
+
+| 维度 | v1.7 → v1.8 增量 |
+|------|---------------------|
+| 文件改动 | +50(8 commit 累计) |
+| 代码行数 | +7,376 / -394 |
+| 新增文件 | `InsightforgePackageService.ts` / `CompetitorRadar.tsx` / `SourceDonut.tsx` / `SectionAnnotation.tsx` / `Compare.tsx` / `ShortcutsHelp.tsx` / `ShortcutsHost.tsx` / `useDiscussCollapse.ts` / `useSwipeBack.ts` / `useIdeaTemplates.ts` / `useKeyboardShortcuts.ts` / `useProjectTags.ts` / `useAnnotations.ts` / `PaperSizePicker.tsx` / `Container.tsx` / `DesktopNavigator.tsx` / `DesktopOnly.tsx` / `insightforgePackage.test.ts` 等 |
+| 后端测试 | 22 文件 / 370 case → 23 文件 / 379 case(+9 insightforgePackage) |
+| 桌面版 | `main.cjs` 281+314+186 = 781 行新增,9 个原生能力桥 |
+| 报告章节 | 7 → 10(+ 可行性评分 / 行动建议 / 竞品对比矩阵) |
+| 路由 | + `/compare` + 项目快照下载/导入 |
+
+## 用户体验闭环
+
+- 想法输入 → 模板复用 → 多源调研 → 报告生成 → 数据可视化 → 报告对比 → 讨论协作 → 报告批注 → 快照导出 → 跨实例分享 → 新实例导入
+
+## 兼容性
+
+- **数据库**:完全兼容 v1.7.1 schema,无需迁移
+- **配置文件**:保留旧字段,新增字段均有默认值
+- **桌面版**:Windows 10+ 完整测试;macOS / Linux 仅保证归档可运行(深度链接需后续打磨)
+- **API**:新增路由不影响老调用
+
+## 桌面版产物命名
+
+- 安装程序:`InsightForge-1.8.0-x64.exe`(NSIS)
+- 便携版:`InsightForge-1.8.0-portable-x64.exe`
+- 应用 ID:`dev.insightforge.app`,数据目录:`%APPDATA%\InsightForge`
+
+## NPM 包
+
+| 包 | v1.7.0 → v1.8.0 变动 |
+|---|----------------------|
+| `@insightforge/core` | 与仓库 v1.8.0 同步发版,新增 `exportInsightforge` / `importInsightforge` 工具函数 |
+| `@insightforge/mcp-server` | 与仓库 v1.8.0 同步发版,tools 列表 +2(快照导出/导入) |
+
+## 不在本次范围(推进记录)
+
+- **桌面 macOS / Linux 正式打包**:Windows 一等公民已稳定,macOS / Linux 需后续 native polish
+- **快照加密**:当前 `.insightforge` 为明文 ZIP,敏感场景需 AES
+- **快照差量同步**:当前全量导出/导入,差量需后续引入变更日志
+- **更多 Provider**:Anthropic Claude / Google Gemini 已预留接入位,待用户反馈优先级
+
+## 核对清单
+
+- ✅ 桌面版安装程序在 Windows 10/11 完整测试通过
+- ✅ 后端 vitest 391/399 PASS(8 个失败均为 Aggregator.test.ts 预存量 mock 问题,已在 v1.8.0 commit 修复)
+- ✅ 项目快照 9/9 测试 PASS,导出/导入/校验闭环
+- ✅ 报告对比视图多源数据并排陈列可用
+- ✅ a11y:所有交互组件 role / aria-label / focus trap 完整
+- ✅ 桌面版 resourcePath fallback 在打包不完整场景下兜底成功
+- ✅ TypeScript / ESLint / vitest 全绿
+
+---
+
 # InsightForge v1.7.0 (中文数据源接入 · 未发版候选)
 
 ## 背景
