@@ -57,7 +57,8 @@ vi.mock('../src/config.js', async () => {
     config: {
       ...actual.config,
       LLM_PROVIDER: 'deepseek',
-      LLM_MODEL: 'deepseek-chat',
+      // 2026-09 用户反馈:'deepseek-chat' 已停用,改为 'deepseek-flash'
+      LLM_MODEL: 'deepseek-flash',
     },
   };
 });

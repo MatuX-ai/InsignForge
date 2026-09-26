@@ -18,13 +18,15 @@ let _clientConfig: Config | null = null;
 function resolveBaseUrl(cfg: Config): string {
   // 显式配置优先
   if (cfg.llmBaseUrl) return cfg.llmBaseUrl;
+  // 与 backend/src/services/llm/providers.ts 保持一致
+  // 所有 OpenAI 兼容端点都以 /v1 结尾(zhipu 例外走 /api/paas/v4)
   switch (cfg.llmProvider) {
     case 'ollama':
       return process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
     case 'deepseek':
-      return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
+      return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1';
     case 'openai':
-      return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com';
+      return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
     // 国产大模型(OpenAI 兼容协议)的默认 baseUrl
     case 'zhipu':
       return process.env.ZHIPU_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4';
@@ -35,23 +37,27 @@ function resolveBaseUrl(cfg: Config): string {
     case 'yi':
       return process.env.YI_BASE_URL ?? 'https://api.lingyiwanwu.com/v1';
     case 'MiniMax':
-      return process.env.MINIMAX_BASE_URL ?? 'https://api.MiniMax.chat/v1';
+      return process.env.MINIMAX_BASE_URL ?? 'https://api.minimaxi.com/v1';
     case 'hunyuan':
       return process.env.HUNYUAN_BASE_URL ?? 'https://api.hunyuan.tencent.com/v1';
     case 'sensenova':
-      return process.env.SENSENOVA_BASE_URL ?? 'https://api.sensenova.cn/compatible-mode/v1';
+      return process.env.SENSENOVA_BASE_URL ?? 'https://token.sensenova.cn/v1';
     case 'stepfun':
       return process.env.STEPFUN_BASE_URL ?? 'https://api.stepfun.com/v1';
     default:
-      return 'https://api.openai.com';
+      return 'https://api.openai.com/v1';
   }
 }
 
 function resolveModel(cfg: Config): string {
   if (cfg.llmModel) return cfg.llmModel;
+  // 与 backend/providers.ts 默认模型保持一致:
+  // - deepseek: 默认 deepseek-flash(2026-09 用户反馈后的 .env 默认),
+  //   'deepseek-chat' 已于 2026-07-24 停用
+  // - 其他: gpt-4o-mini 暂作占位(SDK 未硬编码各 provider 默认模型)
   return (
     process.env.LLM_MODEL ??
-    (cfg.llmProvider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini')
+    (cfg.llmProvider === 'deepseek' ? 'deepseek-flash' : 'gpt-4o-mini')
   );
 }
 

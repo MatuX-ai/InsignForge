@@ -24,7 +24,8 @@ services:
       NODE_ENV: production
       PORT: 3001
       LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
-      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # 2026-09 用户反馈:'deepseek-chat' 已停用,默认改为 'deepseek-flash'
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}

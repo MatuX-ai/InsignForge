@@ -872,10 +872,17 @@ export function Report() {
         overrides.call_to_action_subtext = c.call_to_action_subtext.trim();
       if (c.success_message.trim()) overrides.success_message = c.success_message.trim();
       // 表单字段: 只有当用户实际调整时才覆盖
-      const defaultFields = [
-        { name: 'email', type: 'email' as const, label: '邮箱', placeholder: 'your@email.com', required: true },
+      type FormField = {
+        name: string;
+        type: 'email' | 'phone' | 'text';
+        label: string;
+        placeholder?: string;
+        required: boolean;
+      };
+      const defaultFields: FormField[] = [
+        { name: 'email', type: 'email', label: '邮箱', placeholder: 'your@email.com', required: true },
       ];
-      const eq = (a: typeof defaultFields[0], b: typeof defaultFields[0]) =>
+      const eq = (a: FormField, b: FormField) =>
         a.name === b.name && a.type === b.type && a.label === b.label &&
         (a.placeholder ?? '') === (b.placeholder ?? '') && a.required === b.required;
       const fieldsSame =

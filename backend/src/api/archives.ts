@@ -42,7 +42,7 @@ archivesRouter.get(
 archivesRouter.get(
   '/:projectKey/download',
   asyncHandler((req, res) => {
-    const rawKey = req.params.projectKey ?? '';
+    const rawKey = String((req.params as Record<string, string | undefined>).projectKey ?? '');
     // 防御 1:不允许路径穿越或符号逃逸
     if (
       rawKey.includes('..') ||
@@ -138,7 +138,7 @@ archivesRouter.get(
 archivesRouter.delete(
   '/:projectKey',
   asyncHandler((req, res) => {
-    const rawKey = req.params.projectKey ?? '';
+    const rawKey = String((req.params as Record<string, string | undefined>).projectKey ?? '');
     if (
       rawKey.includes('..') ||
       rawKey.includes('/') ||

@@ -53,7 +53,7 @@ export const LLM_PROVIDERS: readonly LlmProviderMeta[] = [
     keyUrl: 'https://platform.deepseek.com/api_keys',
     suggestedModels: [
       'deepseek-v4-pro',
-      'deepseek-v4-flash',
+      'deepseek-flash',
       'deepseek-v4-flash-vision-exp',
     ],
     defaultModel: 'deepseek-v4-pro',

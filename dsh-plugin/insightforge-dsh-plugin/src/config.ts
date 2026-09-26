@@ -22,13 +22,25 @@ import Schema from '@deepseek-ai/schemastery';
 // 任何调用方只需把它当作"输入未知 -> 输出 Config"的 validator 即可
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Config: any = Schema.object({
+  // 与后端 backend/src/services/llm/providers.ts / packages/core/src/llm.ts 保持一致
+  // 国产模型为 2026-09 增补,端点配置详见 core/llm.ts
   llmProvider: Schema.union(
     Schema.literal('deepseek'),
     Schema.literal('openai'),
-    Schema.literal('ollama')
+    Schema.literal('ollama'),
+    Schema.literal('zhipu'),
+    Schema.literal('qwen'),
+    Schema.literal('moonshot'),
+    Schema.literal('yi'),
+    Schema.literal('MiniMax'),
+    Schema.literal('hunyuan'),
+    Schema.literal('sensenova'),
+    Schema.literal('stepfun')
   )
     .default('deepseek')
-    .description('大模型提供商:deepseek/openai/ollama'),
+    .description(
+      '大模型提供商:deepseek/openai/ollama/zhipu/qwen/moonshot/yi/MiniMax/hunyuan/sensenova/stepfun'
+    ),
 
   llmApiKey: Schema.string()
     .required()

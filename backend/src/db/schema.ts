@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS executions (
   status VARCHAR(20) DEFAULT 'running',       -- running / success / failed
   current_step VARCHAR(100) DEFAULT '',
   logs TEXT DEFAULT '[]',                     -- JSON 数组
+  error_code VARCHAR(50),                      -- 业务错误码(如 MISSING_API_KEY),持久化供前端识别
   started_at TEXT DEFAULT (datetime('now')),
   finished_at TEXT,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE

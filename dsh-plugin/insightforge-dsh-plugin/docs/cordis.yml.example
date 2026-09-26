@@ -41,7 +41,10 @@ dsh:
 
       # Config 段对应 src/config.ts 的 schemastery schema,加载时自动校验
       Config:
-        # LLM 提供商:deepseek(默认) | openai | ollama
+        # LLM 提供商(默认 deepseek):
+        #   deepseek / openai / ollama
+        #   zhipu / qwen / moonshot / yi / MiniMax / hunyuan / sensenova / stepfun
+        # (2026-09 增补国产模型:对应 API Key 环境变量分别为 ZHIPU_API_KEY / QWEN_API_KEY ...)
         llmProvider: deepseek
 
         # LLM API Key(必填)。ollama 模式下可填写占位符(如 "ollama")

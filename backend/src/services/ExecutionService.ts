@@ -26,6 +26,7 @@ interface ExecutionRow {
   status: ExecutionStatus;
   current_step: string;
   logs: string;
+  error_code: string | null;
   started_at: string;
   finished_at: string | null;
 }
@@ -40,6 +41,8 @@ function rowToExecution(row: ExecutionRow): Execution {
     logs: JSON.parse(row.logs) as Execution['logs'],
     started_at: row.started_at,
     finished_at: row.finished_at,
+    // BUG-01 修复:从 DB 行读回 error_code;NULL → undefined(与 Execution.error_code 可选语义一致)
+    error_code: row.error_code ? (row.error_code as Execution['error_code']) : undefined,
   };
 }
 
@@ -131,10 +134,15 @@ export const ExecutionService = {
     ).run(status, executionId);
   },
 
-  /** 设置业务错误码(仅内存态,不持久化) */
+  /** 设置业务错误码(持久化到 DB,供前端轮询 status 时识别) */
   setErrorCode(executionId: string, errorCode: Execution['error_code']): void {
-    const exec = this.getById(executionId);
-    if (exec) exec.error_code = errorCode;
+    const db = getDb();
+    // BUG-01 修复:必须持久化,前端轮询 /status 才能拿到 error_code,
+    // 才能正确弹起 LlmSetupPrompt 弹窗。
+    db.prepare(`UPDATE executions SET error_code = ? WHERE id = ?`).run(
+      errorCode ?? null,
+      executionId
+    );
   },
 
   // ---------- vNext: 调研过程实时指标 ----------

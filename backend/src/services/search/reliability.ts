@@ -179,9 +179,9 @@ function intoResponse(res: import('node:http').IncomingMessage, url: string): Re
     if (Array.isArray(v)) v.forEach((vv) => headers.append(k, vv));
     else if (v != null) headers.set(k, String(v));
   }
-  // 把 IncomingMessage 转为 ReadableStream
-  // @ts-expect-error Node IncomingMessage 兼容 Web ReadableStream
-  const body = res;
+  // 把 IncomingMessage 转为 Web ReadableStream(Node 18+ IncomingMessage 本身是 Readable)
+  // 类型层用 unknown 转换避免类型层 Web Response body 限制
+  const body = res as unknown as ReadableStream<Uint8Array>;
   return new Response(body, { status, headers });
 }
 

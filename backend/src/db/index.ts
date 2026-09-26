@@ -63,6 +63,10 @@ export function getDb(): Database.Database {
   ensureUserIdColumn(_db, 'executions');
   ensureUserIdColumn(_db, 'discussion_sessions');
 
+  // BUG-01 修复:executions.error_code 列迁移。SCHEMA_SQL 走的是 CREATE TABLE IF NOT EXISTS,
+  // 已有表不会自动新增列,因此老库需要显式 ALTER。ensureColumnIfMissing 内部幂等。
+  ensureColumnIfMissing(_db, 'executions', 'error_code', 'VARCHAR(50)');
+
   // 建表(含讨论表 project_id 列与索引;旧库由上方迁移补齐后,CREATE IF NOT EXISTS 均为空操作)
   _db.exec(SCHEMA_SQL);
   _db.exec(FTS_SCHEMA_SQL);
@@ -115,4 +119,28 @@ function ensureUserIdColumn(db: Database.Database, table: string): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_${table}_user ON ${table}(user_id)`
   );
+}
+
+/**
+ * BUG-01 修复:通用幂等列迁移工具 — 若目标表缺少指定列则 ALTER。
+ * 列类型通过 columnType 传入(如 VARCHAR(50) / TEXT / INTEGER)。
+ * 老库与新库均可重复执行,新表在 SCHEMA_SQL 中直接定义即可。
+ */
+function ensureColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  columnType: string
+): void {
+  const exists = (
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+      .get(table) as { name: string } | undefined
+  );
+  if (!exists) return;
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${columnType}`);
+    logger.info({ table, column }, '数据库迁移:已新增列');
+  }
 }

@@ -118,8 +118,11 @@ export function useResearch(): UseResearchReturn {
             msg.includes('API Key') ||
             msg.includes('LLM')
           ) {
+            // BUG-01 修复:在 trigger 阶段也直接设置 errorCode,
+            // 避免用户刷新页面后才看到弹窗(轮询失败分支往往依赖 DB 持久化,
+            // 而部分场景下根本没机会走 poll → failed 分支)。
             setError(msg);
-            setErrorCode(null);
+            setErrorCode('MISSING_API_KEY');
             setLoading(false);
             setRetryAttempt(0);
             return;

@@ -65,7 +65,8 @@ export const LLM_PROVIDERS: readonly LlmProviderMeta[] = [
     id: 'deepseek',
     label: 'DeepSeek',
     brand: '深度求索',
-    baseUrl: 'https://api.deepseek.com',
+    // 与 OpenAI SDK 兼容的 baseURL 需以 /v1 结尾,SDK 才会拼接 /chat/completions
+    baseUrl: 'https://api.deepseek.com/v1',
     // 性能优先:V4-Pro 2026-08-13 正式版旗舰
     defaultModel: 'deepseek-v4-pro',
     requiresKey: true,
@@ -73,10 +74,12 @@ export const LLM_PROVIDERS: readonly LlmProviderMeta[] = [
     keyUrl: 'https://platform.deepseek.com/api_keys',
     // 来源:api-docs.deepseek.com/updates(2026-08 拉取)
     // 旧的 deepseek-chat / deepseek-reasoner 已于 2026-07-24 停用,
-    // deepseek-coder 不在售,以下为当前 V4 系列
+    // deepseek-coder 不在售,以下为当前在售系列
+    // v1.8 用户反馈:统一使用不带 V4 前缀的简称 'deepseek-flash' 作为 .env 默认值,
+    // suggestedModels 同步与 .env / 前端 datalist 保持一致
     suggestedModels: [
       'deepseek-v4-pro',
-      'deepseek-v4-flash',
+      'deepseek-flash',
       'deepseek-v4-flash-vision-exp',
     ],
     supportsThinkingDisable: true,

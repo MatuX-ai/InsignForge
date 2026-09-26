@@ -16,22 +16,52 @@ let _client: OpenAI | null = null;
 let _clientConfig: Config | null = null;
 
 function resolveBaseUrl(cfg: Config): string {
+  // 与 backend/src/services/llm/providers.ts / packages/core/src/llm.ts 保持一致
+  // 所有 OpenAI 兼容端点都以 /v1 结尾(zhipu 例外走 /api/paas/v4)
   if (cfg.llmProvider === 'ollama') {
     return process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
   }
   if (cfg.llmProvider === 'deepseek') {
-    return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
+    return process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com/v1';
   }
   if (cfg.llmProvider === 'openai') {
-    return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com';
+    return process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
   }
-  return 'https://api.openai.com';
+  // 国产大模型(OpenAI 兼容协议)的默认 baseUrl
+  if (cfg.llmProvider === 'zhipu') {
+    return process.env.ZHIPU_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4';
+  }
+  if (cfg.llmProvider === 'qwen') {
+    return process.env.QWEN_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  }
+  if (cfg.llmProvider === 'moonshot') {
+    return process.env.MOONSHOT_BASE_URL ?? 'https://api.moonshot.cn/v1';
+  }
+  if (cfg.llmProvider === 'yi') {
+    return process.env.YI_BASE_URL ?? 'https://api.lingyiwanwu.com/v1';
+  }
+  if (cfg.llmProvider === 'MiniMax') {
+    return process.env.MINIMAX_BASE_URL ?? 'https://api.minimaxi.com/v1';
+  }
+  if (cfg.llmProvider === 'hunyuan') {
+    return process.env.HUNYUAN_BASE_URL ?? 'https://api.hunyuan.tencent.com/v1';
+  }
+  if (cfg.llmProvider === 'sensenova') {
+    return process.env.SENSENOVA_BASE_URL ?? 'https://token.sensenova.cn/v1';
+  }
+  if (cfg.llmProvider === 'stepfun') {
+    return process.env.STEPFUN_BASE_URL ?? 'https://api.stepfun.com/v1';
+  }
+  return 'https://api.openai.com/v1';
 }
 
 function resolveModel(cfg: Config): string {
+  // 与 backend/providers.ts 默认模型保持一致:
+  // - deepseek: 默认 deepseek-flash(2026-09 用户反馈后的 .env 默认),
+  //   'deepseek-chat' 已于 2026-07-24 停用
   return (
     process.env.LLM_MODEL ??
-    (cfg.llmProvider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini')
+    (cfg.llmProvider === 'deepseek' ? 'deepseek-flash' : 'gpt-4o-mini')
   );
 }
 
