@@ -23,6 +23,7 @@ import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { SourceContributionCard } from '../components/SourceContributionCard';
 import { Container } from '../components/Container';
 import { PaperSizePicker } from '../components/PaperSizePicker';
+import { SectionAnnotation } from '../components/SectionAnnotation';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
 import { useDesktopApi } from '../hooks/useDesktopApi';
@@ -434,6 +435,8 @@ export function Report() {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   /** 复制并重新调研 - 加载中状态(置于顶层 hooks 区,避免与其他 useEffect 交错导致顺序不一致) */
   const [duplicating, setDuplicating] = useState(false);
+  /** v1.8 P6-B: wait_and_retry 倒计时(秒),>0 表示正在倒计时,0 表示未启动 */
+  const [waitCountdown, setWaitCountdown] = useState(0);
 
   const {
     status,
@@ -631,6 +634,38 @@ export function Report() {
     const timer = window.setTimeout(() => setExportResult(null), 2000);
     return () => window.clearTimeout(timer);
   }, [exportResult]);
+
+  // v1.8 P6-B: wait_and_retry 倒计时驱动 — 错误码是 SOURCE_RATE_LIMIT / SOURCE_CIRCUIT_OPEN
+  // 时,友好错误结构会自带 wait_and_retry action。errorCode 变化触发后启动一个
+  // setInterval(1s)逐秒减 1;归零后自动调用 retry()。
+  // 错误清除(error 变 null)时主动重置回 0,避免下次报错从上次的残余值起步。
+  useEffect(() => {
+    if (!error || !errorCode) {
+      setWaitCountdown(0);
+      return;
+    }
+    const friendly = explainError(errorCode, error);
+    const action = friendly.action;
+    if (action?.type !== 'wait_and_retry') {
+      setWaitCountdown(0);
+      return;
+    }
+    setWaitCountdown(action.seconds);
+    const timer = window.setInterval(() => {
+      setWaitCountdown((s) => {
+        if (s <= 1) {
+          window.clearInterval(timer);
+          // 倒计时归零 -> 自动重试
+          void retry();
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+    // 仅在错误码变化时重启倒计时;error / retry 函数引用变化不重启
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [errorCode]);
 
   // 商业计划书刚生成成功时,自动用系统默认应用打开首份 md 预览(仅桌面端)
   // 仅当状态从 running → success 切换时才触发,避免重新进入页面时重复弹预览。
@@ -1203,7 +1238,9 @@ export function Report() {
         )}
 
         {/* 调研失败 Banner - 展示友好错误信息,提供手动重试入口(v1.3 友好化)
-             v1.7 增强: 根据 friendly.action 派发跳转「设置」/「历史」 */}
+             v1.7 增强: 根据 friendly.action 派发跳转「设置」/「历史」
+             v1.8 P6-B 增强: 当 friendly.action.type === 'wait_and_retry' 时,
+             显示倒计时进度条 + 「立即重试」手动按钮(不依赖倒计时) */}
         {error && (() => {
           const friendly = explainError(errorCode, error);
           const showRetry = friendly.retryable && retryAttempt === 0;
@@ -1212,14 +1249,21 @@ export function Report() {
           // 如果 action 类型是 retry 以外, 则隐藏默认的重试按钮以免冗余。
           let actionLabel: string | undefined;
           let actionHandler: (() => void) | undefined;
+          let hideDefaultRetry = false;
           switch (friendly.action?.type) {
             case 'go_settings':
               actionLabel = '去设置';
               actionHandler = () => navigate('/settings');
+              hideDefaultRetry = true; // 跳转才是主操作,不重复
               break;
             case 'go_history':
               actionLabel = '查看历史';
               actionHandler = () => navigate('/history');
+              hideDefaultRetry = true;
+              break;
+            case 'wait_and_retry':
+              // 倒计时模式下不走默认 Banner 按钮,由下方 countdown UI 接管
+              hideDefaultRetry = true;
               break;
             // 'retry' 与默认重试按钮重复, 不重复渲染
             default:
@@ -1228,6 +1272,7 @@ export function Report() {
           const action = actionLabel && actionHandler
             ? { label: actionLabel, onClick: actionHandler }
             : undefined;
+          const waitAction = friendly.action?.type === 'wait_and_retry' ? friendly.action : null;
           return (
             <div className="my-6">
               <Banner
@@ -1236,12 +1281,50 @@ export function Report() {
                 action={
                   // 优先级: action(去设置/历史) > 重试
                   action ??
-                  (showRetry
+                  (showRetry && !hideDefaultRetry
                     ? { label: '重试', onClick: () => void retry() }
                     : undefined)
                 }
               >
                 {friendly.detail}
+                {/* v1.8 P6-B: wait_and_retry 倒计时 UI — 限流 / 熔断场景 */}
+                {waitAction && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center gap-2 text-helper">
+                      <span aria-hidden className="animate-pulse">⏱</span>
+                      <span>
+                        {waitCountdown > 0 ? (
+                          <>
+                            将在 <span className="text-text-primary font-semibold tabular-nums">{waitCountdown}</span> 秒后自动重试
+                          </>
+                        ) : (
+                          <>正在触发重试…</>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void retry()}
+                        className="ml-auto text-primary hover:underline"
+                      >
+                        立即重试
+                      </button>
+                    </div>
+                    <div
+                      className="h-1 bg-border rounded-full overflow-hidden"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={waitAction.seconds}
+                      aria-valuenow={waitCountdown}
+                    >
+                      <div
+                        className="h-full bg-primary transition-all duration-1000 ease-linear"
+                        style={{
+                          width: `${waitAction.seconds > 0 ? (waitCountdown / waitAction.seconds) * 100 : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {retryAttempt > 0 && (
                   <div className="mt-2 text-text-secondary">
                     🔄 正在自动重试 ({retryAttempt} / 3)…
@@ -1260,7 +1343,16 @@ export function Report() {
             {/* 章节断点辅助样式:让每个 section 之间有明显的视觉分隔,便于长报告扫读 */}
             {/* 1. 执行摘要 - 顶部不需断点 */}
             <section id="section-summary" className="mb-6">
-              <Card title="执行摘要">
+              <Card
+                title="执行摘要"
+                action={
+                  <SectionAnnotation
+                    projectId={id ?? ''}
+                    sectionKey="section-summary"
+                    sectionLabel="执行摘要"
+                  />
+                }
+              >
                 <p className="text-body text-text-primary leading-relaxed">
                   {currentReport.summary}
                 </p>
@@ -1269,7 +1361,16 @@ export function Report() {
 
             {/* 2. 市场热度 - 可视化增强 */}
             <section id="section-heat" className="mt-10 pt-8 border-t border-border/30">
-              <Card title="市场热度">
+              <Card
+                title="市场热度"
+                action={
+                  <SectionAnnotation
+                    projectId={id ?? ''}
+                    sectionKey="section-heat"
+                    sectionLabel="市场热度"
+                  />
+                }
+              >
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="text-center">
                     <div className="text-helper text-text-secondary mb-2">搜索热度</div>
@@ -1351,6 +1452,13 @@ export function Report() {
                       </Tooltip>
                     </span>
                   }
+                  action={
+                    <SectionAnnotation
+                      projectId={id ?? ''}
+                      sectionKey="section-feasibility"
+                      sectionLabel="可行性评分"
+                    />
+                  }
                 >
                   <div className="flex flex-col md:flex-row items-center gap-6">
                     <div className="flex-shrink-0">
@@ -1398,7 +1506,17 @@ export function Report() {
                 id="section-recommendation"
                 className="mt-10 pt-8 border-t border-border/30"
               >
-                <Card title="行动建议" tone="primary">
+                <Card
+                  title="行动建议"
+                  tone="primary"
+                  action={
+                    <SectionAnnotation
+                      projectId={id ?? ''}
+                      sectionKey="section-recommendation"
+                      sectionLabel="行动建议"
+                    />
+                  }
+                >
                   <div className="space-y-3">
                     {recommendations.map((r, i) => (
                       <div
@@ -1421,7 +1539,16 @@ export function Report() {
 
             {/* 5. 竞品识别 - 补全优劣势 */}
             <section id="section-competitors" className="mt-10 pt-8 border-t border-border/30">
-              <Card title="竞品识别">
+              <Card
+                title="竞品识别"
+                action={
+                  <SectionAnnotation
+                    projectId={id ?? ''}
+                    sectionKey="section-competitors"
+                    sectionLabel="竞品识别"
+                  />
+                }
+              >
                 {currentReport.competitors.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无数据</div>
                 ) : (
@@ -1505,7 +1632,16 @@ export function Report() {
                 设计: md 以上表格,md 以下为「每个竞品一张卡片」的堆叠。 */}
             {currentReport.competitors.length >= 2 && (
               <section id="section-compare" className="mt-10 pt-8 border-t border-border/30">
-                <Card title="竞品对比矩阵">
+                <Card
+                  title="竞品对比矩阵"
+                  action={
+                    <SectionAnnotation
+                      projectId={id ?? ''}
+                      sectionKey="section-compare"
+                      sectionLabel="竞品对比矩阵"
+                    />
+                  }
+                >
                   {/* 桌面端表格 (md+) */}
                   <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
@@ -1652,7 +1788,16 @@ export function Report() {
 
             {/* 6. 用户痛点 */}
             <section id="section-pain" className="mt-10 pt-8 border-t border-border/30">
-              <Card title="用户痛点">
+              <Card
+                title="用户痛点"
+                action={
+                  <SectionAnnotation
+                    projectId={id ?? ''}
+                    sectionKey="section-pain"
+                    sectionLabel="用户痛点"
+                  />
+                }
+              >
                 {currentReport.pain_points.length === 0 ? (
                   <div className="text-helper text-text-secondary">暂无数据</div>
                 ) : (
@@ -1700,7 +1845,16 @@ export function Report() {
               const detectedCount = currencies.length + scales.length + years.length + growths.length;
               return (
                 <section id="section-market-size" className="mt-10 pt-8 border-t border-border/30">
-                  <Card title="市场规模估算">
+                  <Card
+                    title="市场规模估算"
+                    action={
+                      <SectionAnnotation
+                        projectId={id ?? ''}
+                        sectionKey="section-market-size"
+                        sectionLabel="市场规模估算"
+                      />
+                    }
+                  >
                     <p className="text-body leading-relaxed">{text}</p>
                     {/* v1.8 P4-A: 推断详情 — 把"是否含单位"具象化为实际锚点, 让读者一眼看到"已含 USD/2026/亿" */}
                     {text.trim() && detectedCount > 0 && (
@@ -1779,7 +1933,16 @@ export function Report() {
             {/* 8. 风险与机会 */}
             <section id="section-risk-opp" className="mt-10 pt-8 border-t border-border/30">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card title="风险">
+                <Card
+                  title="风险"
+                  action={
+                    <SectionAnnotation
+                      projectId={id ?? ''}
+                      sectionKey="section-risk"
+                      sectionLabel="风险"
+                    />
+                  }
+                >
                   {currentReport.risks.length === 0 ? (
                     <div className="text-helper text-text-secondary">暂无数据</div>
                   ) : (
@@ -1793,7 +1956,16 @@ export function Report() {
                     </ul>
                   )}
                 </Card>
-                <Card title="机会">
+                <Card
+                  title="机会"
+                  action={
+                    <SectionAnnotation
+                      projectId={id ?? ''}
+                      sectionKey="section-opportunity"
+                      sectionLabel="机会"
+                    />
+                  }
+                >
                   {currentReport.opportunities.length === 0 ? (
                     <div className="text-helper text-text-secondary">暂无数据</div>
                   ) : (
@@ -1826,6 +1998,13 @@ export function Report() {
                       </span>
                     )}
                   </span>
+                }
+                action={
+                  <SectionAnnotation
+                    projectId={id ?? ''}
+                    sectionKey="section-sources"
+                    sectionLabel="数据来源"
+                  />
                 }
               >
                 {/* 贡献度分布条(v1.6) */}

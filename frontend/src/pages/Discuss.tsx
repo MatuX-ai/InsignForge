@@ -84,6 +84,81 @@ const MODES: Array<{ value: DiscussionMode; label: string; desc: string; emoji: 
   },
 ];
 
+/**
+ * v1.8 P6-A: 讨论 prompt 模板 (从 4 条拓展至 10 条,按画布类型组织)
+ *
+ * 键名与 DiscussionMode 一一对应;`__common__` 键为通用模板,
+ * 在任意画布下作为补充出现,保证总能展示 2-4 条可选模板。
+ *
+ * 设计原则:
+ *   - 每条模板独立完整,点击后一键填入输入框
+ *   - 模板贴合各自画布的目的,避免跨画布出现"泛泛而谈"的口水提示
+ *   - 附 emoji 前缀,在 Chip 上一眼可辨意图
+ */
+const PROMPT_TEMPLATES: Record<string, ReadonlyArray<string>> = {
+  business_model: [
+    '💼 拆解 9 格商业模式画布:客户细分 / 价值主张 / 渠道 / 客户关系 / 收入流 / 关键资源 / 关键活动 / 重要伙伴 / 成本结构',
+    '💼 梳理收入结构与可变成本,识别「收入 = 价值 × 频次 × 价格」的关键驱动',
+  ],
+  lean_canvas: [
+    '🚀 按精益画布列点:问题 / 解决方案 / 关键指标 / 独特卖点',
+    '🚀 识别项目的早期用户(early adopter)与未被满足的需求',
+  ],
+  swot: [
+    '⚖️ 列出项目的 3 个最大威胁与对应的应对策略',
+    '⚖️ 从竞品视角挑刺:我们的 3 个最薄弱处',
+  ],
+  project: [
+    '🛠️ 拆解 3 个用户故事 (As a / I want / so that)',
+    '🛠️ 列里程碑:未来 4 周每周可交付的核心成果',
+  ],
+  free: [
+    '💡 发散 10 个潜在功能点(不评估可行性)',
+    '💡 随机换一个角色(用户/竞品/投资人)重新看这个项目',
+  ],
+  user_persona: [
+    '👤 识别 3 类核心用户画像:基本信息 / 痛点 / 触发场景 / 购买动机',
+    '👤 从「谁会凌晨 2 点用这个」切入,描摹最核心的 1 个用户',
+  ],
+  competitor: [
+    '🥊 对比 3 个同类产品的差异化机会(定位 / 功能 / 定价)',
+    '🥊 从评论 / 社区抓 3 条竞品用户不满,反向推出我们的进攻点',
+  ],
+  pricing: [
+    '💰 梳理 3 类用户的可接受价格区间与付费动机',
+    '💰 设计 3 档订阅:免费 / 个人 / 团队,各档位核心差异是什么',
+  ],
+  gtm: [
+    '🎯 设计首批 100 个种子用户的获取路径',
+    '🎯 梳理营销钩子:一句话价值主张 + 3 个 demo 场景',
+  ],
+  mvp_scope: [
+    '🧩 生成 10 条 MVP 验证问题清单(用户会不会用 / 会不会付钱)',
+    '🧩 划分 MVP 边界:必须做 / 应该做 / 不要做',
+  ],
+  // 通用模板(任何画布下作为兜底补充)
+  __common__: [
+    '🌐 从用户视角列出 3 个核心痛点',
+    '🌐 生成 10 条 MVP 验证问题清单',
+  ],
+};
+
+/** 解析当前画布的可用模板:优先当前 mode,补足 common */
+function getTemplatesForMode(mode: DiscussionMode | undefined): ReadonlyArray<string> {
+  const specific = (mode && PROMPT_TEMPLATES[mode]) ?? [];
+  const common = PROMPT_TEMPLATES['__common__'] ?? [];
+  // 拼接去重(同一字符串不重复出现)
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of [...specific, ...common]) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 /** 统计画布要点总数(所有 group.points.length 之和) */
 function totalPointCount(canvas: { groups: Array<{ points: unknown[] }> }): number {
   return canvas.groups.reduce((sum, g) => sum + g.points.length, 0);
@@ -1206,24 +1281,17 @@ export function Discuss() {
             )}
           </div>
           <div className="p-3 border-t border-border flex flex-col gap-2">
-            {/* 快捷 prompt 模板 - 仅在空输入时展示 */}
-            {!chatInput.trim() && (
+            {/* 快捷 prompt 模板 - 仅在空输入时展示,v1.8 P6-A 拓展为 10+ 按画布类型 */}
+            {!chatInput.trim() && session && (
               <div className="flex flex-wrap gap-2 mb-1">
-                {(
-                  [
-                    '帮我梳理这个项目的商业模式',
-                    '从用户视角列出 3 个核心痛点',
-                    '对比现有 3 个同类产品的差异化机会',
-                    '生成 10 条 MVP 验证问题清单',
-                  ] as const
-                ).map((tmpl) => (
+                {getTemplatesForMode(session.mode).map((tmpl) => (
                   <button
                     key={tmpl}
                     type="button"
                     onClick={() => setChatInput(tmpl)}
                     className="text-helper px-3 py-1 rounded-full border border-border bg-card-solid/40 text-text-secondary hover:text-primary hover:border-primary/40 transition-colors"
                   >
-                    💡 {tmpl}
+                    {tmpl}
                   </button>
                 ))}
               </div>

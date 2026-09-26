@@ -21,11 +21,14 @@ import type { ErrorCode } from '../types';
  *  - retry: 在当前页直接调用 useResearch.retry()(最常见)
  *  - go_settings: 跳到设置页(用于 API Key 缺失/错误)
  *  - go_history: 跳到历史记录(用于文案无法自解释时)
+ *  - wait_and_retry: v1.8 P6-B — 限流 / 熔断等场景的「N 秒后自动重试」倒计时动作
+ *    seconds 倒计时结束后由 UI 侧自动调用 retry();中途可手动取消
  */
 export type ErrorAction =
   | { type: 'retry' }
   | { type: 'go_settings'; reason?: string }
-  | { type: 'go_history' };
+  | { type: 'go_history' }
+  | { type: 'wait_and_retry'; seconds: number };
 
 /** 友好错误结构 */
 export interface FriendlyError {
@@ -73,8 +76,10 @@ export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   },
   SOURCE_RATE_LIMIT: {
     title: '触发数据源限流',
-    detail: '外部接口返回 429(请求过于频繁)。请稍候 1~2 分钟后再试,避免连续触发限流。',
+    detail: '外部接口返回 429(请求过于频繁)。建议稍候再试,避免连续触发限流。',
     retryable: true,
+    // v1.8 P6-B: 限流后引导用户「30 秒后自动重试」,避免无效连点
+    action: { type: 'wait_and_retry', seconds: 30 },
   },
   SOURCE_SERVER_5XX: {
     title: '数据源服务器异常',
@@ -106,8 +111,10 @@ export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   SOURCE_CIRCUIT_OPEN: {
     title: '数据源熔断保护中',
     detail:
-      '该数据源连续失败次数过多,已自动短路跳过以保护整体调研。冷却期(约 30 秒)结束后会自动恢复。',
+      '该数据源连续失败次数过多,已自动短路跳过以保护整体调研。冷却期结束后会自动恢复。',
     retryable: true,
+    // v1.8 P6-B: 熔断后 30 秒倒计时自动重试(与后端 reliability.ts cooldown 对齐)
+    action: { type: 'wait_and_retry', seconds: 30 },
   },
   SOURCE_VALIDATION: {
     title: '采集参数不合法',
