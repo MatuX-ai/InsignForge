@@ -20,6 +20,7 @@ import { Monitor } from './pages/Monitor';
 import { AuthCallback } from './pages/AuthCallback';
 import { Readme } from './pages/Readme';
 import { Faq } from './pages/Faq';
+import { Compare } from './pages/Compare';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DialogProvider } from './components/Dialog';
 import { GlobalOfflineBanner } from './components/GlobalOfflineBanner';
@@ -45,6 +46,8 @@ export function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/readme" element={<Readme />} />
           <Route path="/faq" element={<Faq />} />
+          {/* v1.8 P5-A: 报告对比视图 — ?ids=<id1>,<id2>... */}
+          <Route path="/compare" element={<Compare />} />
           <Route
             path="*"
             element={

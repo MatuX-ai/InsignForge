@@ -47,6 +47,24 @@ export function History() {
   const [sortBy, setSortBy] = useState<SortBy>('time_desc');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // v1.8 P5-A: 多选对比 — 选中后勾选的项目 ID 集合,用于跳转到 /compare 路由
+  // 仅 status='completed' 且 report 存在的项目可被选中;否则勾选框禁用并提示原因
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
+  const MAX_COMPARE_COUNT = 4;
+
+  // 仅"已完成"项目可参与对比
+  const selectableProjects = useMemo(
+    () =>
+      projects.filter(
+        (p: Project) => p.status === 'completed' && p.report,
+      ),
+    [projects],
+  );
+  const selectableIdSet = useMemo(
+    () => new Set(selectableProjects.map((p: Project) => p.id)),
+    [selectableProjects],
+  );
+
   // FR-10: 跨项目全文检索结果(关键词非空时才拉)
   const [searchHits, setSearchHits] = useState<ProjectSearchHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -236,6 +254,55 @@ export function History() {
     draft: '草稿',
   };
 
+  /**
+   * v1.8 P5-A: 切换项目的对比选中状态
+   * - 仅 completed 状态可参与对比
+   * - 最多 4 份,超出时给出 toast 提示并不再加入
+   * - 删除项目后自动从选中列表移除
+   */
+  const toggleCompareSelection = (projectId: string) => {
+    if (!selectableIdSet.has(projectId)) return;
+    setSelectedForCompare((prev: string[]) => {
+      if (prev.includes(projectId)) {
+        return prev.filter((id: string) => id !== projectId);
+      }
+      if (prev.length >= MAX_COMPARE_COUNT) {
+        // 用 setTimeout 异步弹 toast,避免在 setter 中触发 setState
+        window.setTimeout(() => {
+          void dialog.alert({
+            title: '对比数量已达上限',
+            message: `最多支持 ${MAX_COMPARE_COUNT} 份报告并排对比。请取消部分选中后重试。`,
+            tone: 'warning',
+          });
+        }, 0);
+        return prev;
+      }
+      return [...prev, projectId];
+    });
+  };
+
+  // 项目加载完成 / 删除后,清理已不存在或状态变为非 completed 的选中
+  useEffect(() => {
+    setSelectedForCompare((prev: string[]) =>
+      prev.filter((id: string) => selectableIdSet.has(id)),
+    );
+  }, [selectableIdSet]);
+
+  /**
+   * v1.8 P5-A: 跳转到对比视图
+   */
+  const goCompare = () => {
+    if (selectedForCompare.length < 2) {
+      void dialog.alert({
+        title: '请至少选择 2 份报告',
+        message: '对比视图至少需要 2 份已完成报告。请再勾选一份。',
+        tone: 'warning',
+      });
+      return;
+    }
+    navigate(`/compare?ids=${selectedForCompare.join(',')}`);
+  };
+
   return (
     <Container size="lg">
       <div className="flex items-center justify-between mb-6">
@@ -384,6 +451,10 @@ export function History() {
                   hasArchive={Boolean(archives[archiveKey])}
                   onDelete={handleDelete}
                   deleting={deletingId === project.id}
+                  // v1.8 P5-A: 对比勾选 + 可选状态
+                  selectable={selectableIdSet.has(project.id)}
+                  selected={selectedForCompare.includes(project.id)}
+                  onToggleCompare={() => toggleCompareSelection(project.id)}
                 />
               </div>
             );
@@ -469,6 +540,48 @@ export function History() {
           显示 {filteredProjects.length} / {projects.length} 条记录
         </div>
       )}
+
+      {/* v1.8 P5-A: 对比浮动操作栏 — 选中 ≥1 份已完成报告时浮出,
+          显示已选数量与「对比选中」入口;点击后跳转 /compare?ids=...
+          位置:fixed 底部居中,避开 TopBar,移动端下也不会盖住列表滚动 */}
+      {selectedForCompare.length >= 1 && (
+        <div
+          role="region"
+          aria-label="对比操作栏"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-card/95 backdrop-blur-xl border border-primary/30 rounded-2xl shadow-glow-md px-4 py-3 flex items-center gap-3 animate-if-panel-rise max-w-[calc(100vw-2rem)]"
+        >
+          <div className="text-helper text-text-secondary flex items-center gap-1">
+            <span aria-hidden className="text-primary-light">📊</span>
+            <span>
+              已选{' '}
+              <span className="text-text-primary font-semibold">
+                {selectedForCompare.length}
+              </span>{' '}
+              / {MAX_COMPARE_COUNT}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedForCompare([])}
+            className="text-helper text-text-secondary hover:text-text-primary px-2 py-1 rounded transition-colors"
+            title="清空对比选择"
+            aria-label="清空对比选择"
+          >
+            清空
+          </button>
+          <Button
+            onClick={goCompare}
+            disabled={selectedForCompare.length < 2}
+            title={
+              selectedForCompare.length < 2
+                ? '至少选择 2 份报告才能对比'
+                : `对比 ${selectedForCompare.length} 份报告`
+            }
+          >
+            对比选中 ({selectedForCompare.length})
+          </Button>
+        </div>
+      )}
     </Container>
   );
 }
@@ -540,6 +653,10 @@ function ProjectCard({
   hasArchive,
   onDelete,
   deleting,
+  // v1.8 P5-A: 对比勾选 props
+  selectable = false,
+  selected = false,
+  onToggleCompare,
 }: {
   project: Project;
   archive?: { dir: string; files: string[] };
@@ -555,6 +672,12 @@ function ProjectCard({
     mode: 'default' | 'clean' | 'export-then-delete'
   ) => void;
   deleting: boolean;
+  /** v1.8 P5-A: 是否可参与对比(仅 completed 且有报告) */
+  selectable?: boolean;
+  /** v1.8 P5-A: 是否已被选中对比 */
+  selected?: boolean;
+  /** v1.8 P5-A: 切换选中回调 */
+  onToggleCompare?: () => void;
 }) {
   const navigate = useNavigate();
   const dialog = useDialog();
@@ -635,10 +758,49 @@ function ProjectCard({
 
   return (
     <div
-      className="bg-card backdrop-blur-xl border border-border rounded-card p-4 hover:border-primary/40 hover:shadow-glow-sm transition-all cursor-pointer"
+      className={`bg-card backdrop-blur-xl border rounded-card p-4 hover:border-primary/40 hover:shadow-glow-sm transition-all cursor-pointer ${
+        // v1.8 P5-A: 选中态视觉反馈 - 蓝色边框 + 蓝色背景
+        selected
+          ? 'border-primary shadow-glow-sm bg-primary/5'
+          : 'border-border'
+      }`}
       onClick={handleClick}
     >
       <div className="flex items-start justify-between gap-4">
+        {/* v1.8 P5-A: 对比勾选框 - 放在标题左侧,click 阻止冒泡避免跳转到报告页 */}
+        {selectable && (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={selected}
+            aria-label={selected ? `从对比移除 ${project.name}` : `加入对比 ${project.name}`}
+            title={selected ? '从对比移除' : '加入对比(最多 4 份)'}
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+              e.stopPropagation();
+              onToggleCompare?.();
+            }}
+            className={`shrink-0 mt-1 w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+              selected
+                ? 'bg-primary border-primary text-white'
+                : 'border-border hover:border-primary/60'
+            }`}
+          >
+            {selected && (
+              <svg
+                aria-hidden
+                viewBox="0 0 12 12"
+                className="w-3 h-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M2 6.5L5 9L10 3" />
+              </svg>
+            )}
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-body font-medium text-text-primary truncate">
