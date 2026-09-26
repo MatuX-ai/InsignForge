@@ -13,8 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Router } from 'express';
-import { asyncHandler, ok } from './response.js';
-import { listHistoryDocs } from '../utils/archive.js';
+import { asyncHandler, ok, fail } from './response.js';
+import { listHistoryDocs, removeProjectArchive } from '../utils/archive.js';
 import { createZipBuffer } from '../utils/zip.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -121,5 +121,35 @@ archivesRouter.get(
     );
     res.setHeader('Content-Length', String(zip.length));
     res.send(zip);
+  })
+);
+
+/**
+ * v1.8 P2-C: 删除某个项目的历史归档目录
+ * URL: DELETE /api/v1/archives/:projectKey
+ *
+ *   - 校验 projectKey 合法性(同 download 路由)
+ *   - 仅清理文件系统,不动数据库项目记录
+ *   - 目录不存在(幂等成功)/存在则删除
+ *   - 项目级「删除并清理归档」前端流程: 删项目 + 调此接口
+ *
+ * 返回: { ok: true, removed: boolean }
+ */
+archivesRouter.delete(
+  '/:projectKey',
+  asyncHandler((req, res) => {
+    const rawKey = req.params.projectKey ?? '';
+    if (
+      rawKey.includes('..') ||
+      rawKey.includes('/') ||
+      rawKey.includes('\\') ||
+      rawKey.length === 0 ||
+      rawKey.length > 80
+    ) {
+      return fail(res, 400, '非法项目标识');
+    }
+    const removed = removeProjectArchive(rawKey);
+    logger.info({ projectKey: rawKey, removed }, '历史归档删除请求');
+    return ok(res, { removed }, removed ? '归档已清理' : '归档不存在或无需清理');
   })
 );

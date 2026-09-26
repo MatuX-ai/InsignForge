@@ -142,3 +142,44 @@ export function listHistoryDocs(): Record<string, HistoryDocEntry> {
   }
   return result;
 }
+
+/**
+ * v1.8 P2-C: 移除指定项目的归档目录(及其全部内容)
+ *
+ * 设计要点:
+ *   - 用于「删除并清理归档」场景 - 前端 ProjectCard 删除菜单的次级选项
+ *   - 严格路径防御: projectKey 仅允许 sanitize 后的目录名,
+ *     resolve 后必须落在 config.HISTORY_DOC_DIR 之下,避免符号链接逃逸
+ *   - 目录不存在视为成功(幂等),便于并发删除/重试场景
+ *   - 返回 true/false 表达是否真正删除了文件,供前端 toast 反馈
+ */
+export function removeProjectArchive(projectKey: string): boolean {
+  const root = config.HISTORY_DOC_DIR;
+  if (!projectKey) return false;
+  // 防御: 不允许路径穿越或符号逃逸
+  if (
+    projectKey.includes('..') ||
+    projectKey.includes('/') ||
+    projectKey.includes('\\') ||
+    projectKey.length > 80
+  ) {
+    return false;
+  }
+  const projectDir = path.resolve(root, projectKey);
+  const rootResolved = path.resolve(root);
+  if (
+    projectDir !== rootResolved &&
+    !projectDir.startsWith(rootResolved + path.sep)
+  ) {
+    return false;
+  }
+  if (!fs.existsSync(projectDir)) return false;
+  try {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    logger.info({ projectKey, projectDir }, '历史归档目录已删除');
+    return true;
+  } catch (err) {
+    logger.error({ projectKey, err }, '删除归档目录失败');
+    return false;
+  }
+}

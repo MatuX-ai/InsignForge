@@ -8,12 +8,24 @@
  *   - title 简短(<= 18 字),用于 Banner 标题
  *   - detail 给具体建议;不让用户对着"网络错误"发呆
  *   - retryable=false 时,UI 隐藏"重试"按钮,避免无效点击
+ *   - action 可选:绑定一个具体的引导动作(如"去设置页"、"重试本次调研"等),
+ *     Report 页可直接在 Banner 上派发,无须各页面手写 case 分支
  *
  * 双端维护提醒:
  *   增删 ErrorCode 时,**同时**更新 frontend/src/types/index.ts 与本文件的 FRIENDLY_ERRORS;
  *   否则会出现"码 → 文案"对不上的退化(走 fallback 文案)。
  */
 import type { ErrorCode } from '../types';
+
+/** 错误恢复动作类型
+ *  - retry: 在当前页直接调用 useResearch.retry()(最常见)
+ *  - go_settings: 跳到设置页(用于 API Key 缺失/错误)
+ *  - go_history: 跳到历史记录(用于文案无法自解释时)
+ */
+export type ErrorAction =
+  | { type: 'retry' }
+  | { type: 'go_settings'; reason?: string }
+  | { type: 'go_history' };
 
 /** 友好错误结构 */
 export interface FriendlyError {
@@ -23,6 +35,8 @@ export interface FriendlyError {
   detail: string;
   /** false 时 UI 不显示"重试"按钮(例如参数错误、鉴权缺失) */
   retryable: boolean;
+  /** 可选:错误恢复动作描述,UI 在 Banner 主按钮旁派发 */
+  action?: ErrorAction;
 }
 
 /**
@@ -31,12 +45,15 @@ export interface FriendlyError {
  *   - 标题使用陈述句,告诉用户"发生了什么"
  *   - detail 给具体可操作的建议(如"切换到其他 Provider"、"查看 API Key 是否过期")
  *   - SOURCE_RATE_LIMIT 鼓励稍候再试;SOURCE_CIRCUIT_OPEN 告知"该源暂时停用,稍后自动恢复"
+ *   - 每个非瞬态错误(MISSING_API_KEY / SOURCE_CLIENT_4XX 等)绑定 action,
+ *     引导用户跳到下一站而不是"挂死"在报告页
  */
 export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   MISSING_API_KEY: {
     title: '尚未配置大模型 API Key',
     detail: '请前往「设置」页面填写对应 Provider 的 API Key 后重试。',
     retryable: false,
+    action: { type: 'go_settings', reason: 'missing_api_key' },
   },
   INTERNAL_ERROR: {
     title: '调研过程出现异常',
@@ -45,7 +62,8 @@ export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   },
   SOURCE_NETWORK: {
     title: '网络异常',
-    detail: '多源采集引擎无法连接外部数据源,请检查网络连通性后重试。',
+    detail:
+      '多源采集引擎无法连接外部数据源,请检查网络连通性后重试。如果公司网络需要代理,请在「设置 → 网络与代理」中配置。',
     retryable: true,
   },
   SOURCE_TIMEOUT: {
@@ -75,8 +93,10 @@ export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   },
   SOURCE_CLIENT_4XX: {
     title: '数据源请求被拒',
-    detail: '外部数据源返回 4xx(请求参数错或鉴权失败)。请检查搜索源配置或更换 Provider。',
+    detail:
+      '外部数据源返回 4xx(请求参数错或鉴权失败)。请检查搜索源配置,或在「设置」中更换 Provider / 数据源配置。',
     retryable: false,
+    action: { type: 'go_settings', reason: 'source_client_4xx' },
   },
   SOURCE_PARSE: {
     title: '数据源响应解析失败',
@@ -85,13 +105,15 @@ export const FRIENDLY_ERRORS: Record<ErrorCode, FriendlyError> = {
   },
   SOURCE_CIRCUIT_OPEN: {
     title: '数据源熔断保护中',
-    detail: '该数据源连续失败次数过多,已自动短路跳过以保护整体调研。冷却期(约 30 秒)结束后会自动恢复。',
+    detail:
+      '该数据源连续失败次数过多,已自动短路跳过以保护整体调研。冷却期(约 30 秒)结束后会自动恢复。',
     retryable: true,
   },
   SOURCE_VALIDATION: {
     title: '采集参数不合法',
     detail: '提交给数据源的关键词为空或过长,已拒绝本次请求。请检查项目描述与关键词。',
     retryable: false,
+    action: { type: 'go_history' },
   },
 };
 

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
+import { Container } from '../components/Container';
 import { api } from '../lib/api';
 import type {
   SchedulerJobStatus,
@@ -130,7 +131,50 @@ export function Monitor() {
   );
 
   return (
-    <main className="flex-1 px-6 py-10 max-w-5xl mx-auto w-full">
+    <Container size="xl">
+      {/* 角色说明卡片 - P2-07 增强
+          明确说明本面板面向开发者 / 运维;普通用户不需要关注。 */}
+      <details
+        className="mb-4 bg-card/50 backdrop-blur border border-border rounded-card overflow-hidden"
+        open={false}
+      >
+        <summary className="cursor-pointer px-4 py-2.5 text-helper text-text-secondary hover:text-text-primary transition-colors flex items-center gap-2">
+          <span aria-hidden>👩‍💻</span>
+          <span className="font-medium">本面板面向谁 · 查看什么</span>
+          <span className="ml-auto text-text-tertiary">展开说明</span>
+        </summary>
+        <div className="px-4 pb-4 pt-2 text-helper text-text-secondary space-y-2 border-t border-border">
+          <div>
+            <span className="font-medium text-text-primary">面向人群:</span>
+            本面板是面向<strong className="text-primary-light">开发者 / 运维人员</strong>的可观测性仪表盘,
+            用于快速定位<strong>「API Key 为什么没生效 / 调度器为什么停了 / 缓存会不会过期」</strong>这类问题。
+          </div>
+          <div>
+            <span className="font-medium text-text-primary">不面向普通用户:</span>
+            如果你只是想「输入想法 → 生成报告」,本面板无需查看。这里只读不写,
+            以不修改任何业务数据。
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 pt-2">
+            <div>
+              <span className="text-emerald-400 font-medium">数据库(DB):</span>
+              检查 SQLite 读写是否正常, 延迟
+            </div>
+            <div>
+              <span className="text-emerald-400 font-medium">LLM:</span>
+              当前供应商 / 模型 / API Key 配置状态
+            </div>
+            <div>
+              <span className="text-emerald-400 font-medium">LLM 缓存:</span>
+              节省调用成本的 LLM 响应缓存 (开启 / 总数 / 活跃 / 过期)
+            </div>
+            <div>
+              <span className="text-emerald-400 font-medium">调度器:</span>
+              后台任务 (清理 / 拉取 / 重试) 运行状态与周期
+            </div>
+          </div>
+        </div>
+      </details>
+
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <h1 className="text-title text-text-primary">系统监控</h1>
         <div className="flex items-center gap-3">
@@ -158,7 +202,18 @@ export function Monitor() {
 
       {error && (
         <div className="mb-6">
-          <Banner tone="warning" title="部分接口拉取失败">
+          <Banner
+            tone="warning"
+            title="部分接口拉取失败"
+            // v1.8 P0-A6: 监控页错误诊断 - 时间戳 + URL + 完整错误信息
+            copyLabel="复制诊断"
+            copyText={`[InsightForge 监控页错误诊断]\n时间: ${new Date().toISOString()}\n页面: /monitor\n后端地址: ${typeof window !== 'undefined' ? window.location.origin : ''}\n错误信息: ${error}`}
+            // v1.8 P1-E: 加「重试」双动作 - 避免自动刷新周期内(默认 10s)用户需等待
+            action={{
+              label: '重试',
+              onClick: () => void refresh(),
+            }}
+          >
             {error}。下方数据可能为上一次成功结果。
           </Banner>
         </div>
@@ -303,7 +358,7 @@ export function Monitor() {
       <div className="text-helper text-text-secondary mt-4">
         数据每 {REFRESH_INTERVAL_MS / 1000} 秒自动刷新;面板仅用于运维排查,不对外暴露。
       </div>
-    </main>
+    </Container>
   );
 }
 

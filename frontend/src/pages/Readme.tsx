@@ -3,10 +3,11 @@
  * 展示项目核心说明,更多细节请前往 GitHub 仓库。
  */
 import { Card } from '../components/Card';
+import { Container } from '../components/Container';
 
 export function Readme() {
   return (
-    <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
+    <Container size="md">
       <h1 className="text-title text-text-primary mb-2">InsightForge 个人版</h1>
       <p className="text-body text-text-secondary mb-6">
         让每一个好想法在被投入大量资源之前,先得到数据的检验。
@@ -91,6 +92,6 @@ npm run dev`}
         </a>
         查看。
       </div>
-    </main>
+    </Container>
   );
 }

@@ -10,7 +10,7 @@
  *   - 开发模式:   desktop/resources/{backend,frontend-dist}
  *   - 打包后:     <安装目录>/resources/{backend,frontend-dist}
  */
-const { app, BrowserWindow, shell, dialog, session, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, dialog, session, ipcMain, Menu, Tray, Notification, clipboard } = require('electron');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -72,6 +72,70 @@ ipcMain.handle('save-dir', async (_event, args) => {
     // 递归复制整个目录(Node 16.7+ 内置 fs.cpSync;项目使用 Node 22+)
     fs.cpSync(sourceDir, target, { recursive: true });
     return { ok: true, targetDir: target };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * IPC: 渲染进程调用通知主进程跳转路由(v1.8 P0-A1)
+ * 主进程向所有 BrowserWindow 广播 'desktop:navigate' 事件,前端
+ * onNavigate 订阅后用 react-router 跳转。
+ *
+ * 为什么不是直接传 URL 打开新 BrowserWindow:
+ *   产品定位是单窗口 SPA,路由跳转的体验远优于新开窗 + 跳转。
+ */
+ipcMain.handle('desktop:navigate', async (_event, pathArg) => {
+  if (typeof pathArg !== 'string' || !pathArg.startsWith('/')) {
+    return { ok: false, message: '路由必须以 / 开头' };
+  }
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('desktop:navigate', pathArg);
+  }
+  return { ok: true };
+});
+
+/**
+ * IPC: 弹系统级通知(v1.8 P0-A2)
+ * 调研完成/失败/历史归档生成时调用。
+ * 通知点击时聚焦主窗口 + 跳转 /history。
+ */
+ipcMain.handle('desktop:notify', async (_event, args) => {
+  if (!Notification.isSupported()) {
+    return { ok: false, message: '当前系统不支持通知' };
+  }
+  const title = args && typeof args.title === 'string' ? args.title : 'InsightForge';
+  const body = args && typeof args.body === 'string' ? args.body : '';
+  const silent = !!(args && args.silent);
+  try {
+    const n = new Notification({ title, body, silent });
+    n.on('click', () => {
+      const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+      if (main) {
+        if (main.isMinimized()) main.restore();
+        main.show();
+        main.focus();
+        main.webContents.send('desktop:navigate', '/history');
+      }
+    });
+    n.show();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/**
+ * IPC: 复制文本到剪贴板(v1.8 P0-A6)
+ * Banner 错误诊断导出用,Web 端可降级使用 navigator.clipboard.
+ */
+ipcMain.handle('desktop:copy', async (_event, text) => {
+  if (typeof text !== 'string') {
+    return { ok: false, message: '只能复制字符串' };
+  }
+  try {
+    clipboard.writeText(text);
+    return { ok: true };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
@@ -317,6 +381,214 @@ function waitBackendReady(child, timeoutMs = 30_000) {
   });
 }
 
+/**
+ * v1.8 P0-A1: 装载原生应用菜单 + 快捷键
+ *
+ * 设计要点:
+ *   - 跨平台: macOS 用标准 appMenu role,Windows/Linux 用自定义中文菜单
+ *   - 快捷键: 新建调研 Ctrl/Cmd+N、首页 Ctrl/Cmd+1、历史 Ctrl/Cmd+2、设置 Ctrl/Cmd+,、关于 F1
+ *   - 点击菜单项通过 webContents.send('desktop:navigate', '/xxx') 通知前端路由
+ *   - autoHideMenuBar 改为 false 后用户可以用 Alt 显示(同时增加 Alt 访达菜单提示)
+ */
+function setupApplicationMenu() {
+  const isMac = process.platform === 'darwin';
+
+  /** 告诉渲染进程跳到指定路由的辅助函数 */
+  function sendNavigate(path) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('desktop:navigate', path);
+    }
+  }
+
+  /** 聚焦主窗口辅助 */
+  function focusMain() {
+    const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (main) {
+      if (main.isMinimized()) main.restore();
+      main.show();
+      main.focus();
+    }
+  }
+
+  const template = [];
+
+  // macOS: 标准 App Menu 占位(关于/服务/退出/隐藏)
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  }
+
+  template.push(
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '新建调研',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => sendNavigate('/'),
+        },
+        { type: 'separator' },
+        {
+          label: '历史记录',
+          accelerator: 'CmdOrCtrl+2',
+          click: () => sendNavigate('/history'),
+        },
+        {
+          label: '监控中心',
+          accelerator: 'CmdOrCtrl+3',
+          click: () => sendNavigate('/monitor'),
+        },
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        {
+          label: '首页',
+          accelerator: 'CmdOrCtrl+1',
+          click: () => sendNavigate('/'),
+        },
+        { type: 'separator' },
+        { role: 'reload', label: '重新加载' },
+        { role: 'forceReload', label: '强制重新加载' },
+        { role: 'toggleDevTools', label: '开发者工具' },
+        { type: 'separator' },
+        { role: 'resetZoom', label: '实际大小' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '切换全屏' },
+      ],
+    },
+    {
+      label: '设置',
+      submenu: [
+        {
+          label: '偏好设置',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => sendNavigate('/settings'),
+        },
+        {
+          label: '用户中心',
+          accelerator: 'CmdOrCtrl+U',
+          click: () => sendNavigate('/account'),
+        },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '使用文档',
+          accelerator: 'F1',
+          click: () => sendNavigate('/readme'),
+        },
+        {
+          label: '常见问题',
+          click: () => sendNavigate('/faq'),
+        },
+        { type: 'separator' },
+        {
+          label: '关于 InsightForge',
+          click: () => {
+            focusMain();
+            dialog.showMessageBox(mainWindow ?? undefined, {
+              type: 'info',
+              title: '关于 InsightForge',
+              message: 'InsightForge',
+              detail: `一个想法 → 5 分钟拿到数据支撑的市场报告\n\nv${app.getVersion()}\nElectron ${process.versions.electron}\nNode ${process.versions.node}\nChrome ${process.versions.chrome}`,
+              buttons: ['好的'],
+              defaultId: 0,
+            });
+          },
+        },
+      ],
+    }
+  );
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * v1.8 P0-A2: 系统托盘(Windows 任务栏 / macOS 菜单栏 / Linux 系统托盘)
+ *
+ * 单击托盘图标聚焦主窗口,右键打开上下文菜单(显示/隐藏/退出)。
+ * 图标文件复用 build/icon.ico;若不存在则跳过托盘(产品体验降级而非崩溃)。
+ */
+let tray = null;
+function setupTray() {
+  const iconPath = resolveWindowIcon();
+  if (!iconPath || !fs.existsSync(iconPath)) {
+    console.warn('[desktop] 未找到图标文件,跳过系统托盘装载');
+    return;
+  }
+  try {
+    tray = new Tray(iconPath);
+    tray.setToolTip('InsightForge · 一个想法到市场报告 5 分钟');
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: '显示主窗口',
+        click: () => {
+          const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+          if (main) {
+            if (main.isMinimized()) main.restore();
+            main.show();
+            main.focus();
+          }
+        },
+      },
+      {
+        label: '新建调研',
+        click: () => {
+          const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+          if (main) {
+            if (main.isMinimized()) main.restore();
+            main.show();
+            main.focus();
+            main.webContents.send('desktop:navigate', '/');
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: '退出',
+        click: () => app.quit(),
+      },
+    ]);
+    tray.setContextMenu(contextMenu);
+    // Windows / Linux 单击托盘 = 聚焦主窗口
+    // macOS 习惯单击 = 上下文菜单(已通过 setContextMenu 提供)
+    if (process.platform !== 'darwin') {
+      tray.on('click', () => {
+        const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+        if (main) {
+          if (main.isMinimized()) main.restore();
+          main.show();
+          main.focus();
+        }
+      });
+    }
+  } catch (err) {
+    // 托盘装载失败(常见于 Linux 无系统托盘服务)只警告不崩溃
+    console.warn(`[desktop] 系统托盘装载失败: ${err instanceof Error ? err.message : String(err)}`);
+    tray = null;
+  }
+}
+
 /** 创建主窗口 */
 function createWindow(port) {
   const iconPath = resolveWindowIcon();
@@ -328,7 +600,7 @@ function createWindow(port) {
     backgroundColor: '#0F172A',
     title: 'InsightForge',
     icon: iconPath,
-    autoHideMenuBar: true,
+    autoHideMenuBar: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -488,6 +760,11 @@ async function bootstrap() {
   // 统一下载处理: 报告 / 开发文档 / 落地页等文件保存
   // (商业计划书不再走 HTTP 下载,改为走 IPC save-dir 弹目录对话框另存)
   setupDownloadHandler();
+
+  // v1.8 P0-A1/A2: 装载原生应用菜单 + 快捷键 + 系统托盘
+  // 必须在 createWindow 之前调用 setApplicationMenu,否则首帧菜单栏闪烁
+  setupApplicationMenu();
+  setupTray();
 
   const entry = resolveBackendEntry();
   if (!fs.existsSync(entry)) {

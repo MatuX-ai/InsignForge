@@ -2,6 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== v1.8 P2-B: 通用入场动画 ===== */
+/* 之前:Modal / Banner / 列表项 都是「啪」地一下出现,没有过渡,显得突兀。
+ * 之后:统一用一组语义化类,默认动画时长 180ms,曲线 ease-out 模拟物理回弹,
+ *      严格遵守 prefers-reduced-motion(媒体查询降级,适配动效敏感用户)。 */
+
+/* 背景遮罩渐入 - 用于 Modal/Lightbox 背景层 */
+@keyframes backdrop-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+.if-backdrop-in {
+  animation: backdrop-fade-in 180ms ease-out both;
+}
+
+/* 内容面板上浮 + 渐入 - 用于 Modal 主体、Dropdown 面板、Tooltip */
+@keyframes panel-rise {
+  0%   { opacity: 0; transform: translateY(8px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.if-panel-rise {
+  animation: panel-rise 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+
+/* Banner 从右侧滑入 - 错误/警告提示 18px 横向偏移 + 渐入 */
+@keyframes banner-slide-in {
+  0%   { opacity: 0; transform: translateX(18px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.if-banner-in {
+  animation: banner-slide-in 200ms ease-out both;
+}
+
+/* Toast 顶部下滑 - 用于顶部通知 */
+@keyframes toast-drop-in {
+  0%   { opacity: 0; transform: translateY(-12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.if-toast-in {
+  animation: toast-drop-in 200ms ease-out both;
+}
+
+/* 列表项渐入 - 给 History / Dropdown items 用,父容器加 .if-stagger / 子元素加 .if-stagger-item */
+@keyframes list-fade-in {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.if-stagger-item {
+  animation: list-fade-in 220ms ease-out both;
+  /* 默认无延迟,通过 :nth-child 注入 --i 变量来错开 */
+  animation-delay: calc(var(--stagger-i, 0) * 28ms);
+}
+
+/* 卡片弹性入场 - 大块卡片如 ProjectCard / DiscussionSession */
+@keyframes card-spring-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.if-card-spring {
+  animation: card-spring-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top center;
+}
+
+/* 数字/计数滚动同步 - 反馈「数据变化了」的视觉提示 */
+@keyframes number-pop {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+.if-number-pop {
+  animation: number-pop 320ms ease-out both;
+}
+
+/* 动效敏感用户:全部降级为瞬时呈现,尊重系统偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .if-backdrop-in,
+  .if-panel-rise,
+  .if-banner-in,
+  .if-toast-in,
+  .if-stagger-item,
+  .if-card-spring,
+  .if-number-pop {
+    animation: none !important;
+  }
+}
+
 /* ===== 全局样式 - 深色玻璃拟态主题 ===== */
 html, body, #root {
   height: 100%;
@@ -284,7 +370,8 @@ textarea::placeholder {
   html, body {
     background-color: #ffffff !important;
     color: #111827;
-    font-size: 11.5px;
+    /* v1.8 P2-A: 打印 body 11.5 → 12px,与 helper/label 调整一致(打印场景稍紧凑可控) */
+    font-size: 12px;
     line-height: 1.65;
     font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
       "Source Han Sans CN", "Noto Sans CJK SC", "WenQuanYi Micro Hei",

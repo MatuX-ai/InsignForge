@@ -3,13 +3,26 @@
  * 桌面端:横排 nav
  * 移动端:右上角汉堡按钮,展开下拉菜单
  *
- * v2.0: 右侧加入用户登录入口
+ * v2.0 改动:
+ *   - BUG-04: 不再硬编码 'v1.6',改为从 vite 注入的 VITE_APP_VERSION 读取,
+ *     版本号永远跟随 package.json,不会落后于实际版本。
+ *   - P3-20: 把"桌面端横排 nav"的断点从 md(768px)改为 lg(1024px),
+ *     平板尺寸也能用汉堡菜单,与设计文档 §2.2 一致。
+ *
+ * v2.0 鉴权:
+ *   - 右侧加入用户登录入口
  *   - 未登录: 显示「登录」按钮(仅当 authEnabled)
  *   - 已登录: 头像 + 名字 + 下拉菜单(注销 / 配额信息)
  */
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useCurrentUser } from '../hooks/useCurrentUser';
+
+// 修复 BUG-04: 从 vite 注入的环境变量读取真实版本号(由 vite.config.ts 注入)。
+// 升级 package.json 后无需修改前端代码。
+const APP_VERSION: string =
+  (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_APP_VERSION ??
+  '0.0.0';
 
 const tabs: Array<{ path: string; label: string; icon?: string }> = [
   { path: '/', label: '首页' },
@@ -76,8 +89,8 @@ export function TopBar() {
         InsightForge
       </Link>
 
-      {/* 桌面端横排 nav */}
-      <nav className="hidden md:flex gap-6">
+      {/* 桌面端横排 nav (≥lg=1024px 才显示,与设计文档 §2.2 断点对齐) */}
+      <nav className="hidden lg:flex gap-6">
         {tabs.map((tab) => {
           const active = location.pathname === tab.path;
           return (
@@ -100,10 +113,10 @@ export function TopBar() {
         })}
       </nav>
 
-      {/* 右侧:版本号(桌面) + 用户菜单 + 汉堡(移动) */}
+      {/* 右侧:版本号(桌面 ≥lg) + 用户菜单 + 汉堡(<lg) */}
       <div className="ml-auto flex items-center gap-3">
-        <div className="hidden md:block text-helper text-text-tertiary">
-          v1.6 · 个人版
+        <div className="hidden lg:block text-helper text-text-tertiary">
+          v{APP_VERSION} · 个人版
         </div>
 
         {/* v2.0: 用户登录入口(鉴权开启时显示) */}
@@ -182,8 +195,8 @@ export function TopBar() {
           </div>
         )}
 
-        {/* 移动端汉堡按钮 */}
-        <div ref={menuRef} className="md:hidden relative">
+        {/* 移动端汉堡按钮 (<lg=1024px) */}
+        <div ref={menuRef} className="lg:hidden relative">
           <button
             type="button"
             aria-label={open ? '关闭菜单' : '打开菜单'}
@@ -217,7 +230,7 @@ export function TopBar() {
                 );
               })}
               <div className="px-4 py-2 text-helper text-text-tertiary border-t border-border">
-                v1.6 · 个人版
+                v{APP_VERSION} · 个人版
               </div>
             </div>
           )}

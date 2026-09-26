@@ -23,6 +23,7 @@ import { Faq } from './pages/Faq';
 import { OnboardingModal } from './components/OnboardingModal';
 import { DialogProvider } from './components/Dialog';
 import { GlobalOfflineBanner } from './components/GlobalOfflineBanner';
+import { DesktopNavigator } from './components/DesktopNavigator';
 
 export function App() {
   return (
@@ -31,6 +32,8 @@ export function App() {
       <div className="min-h-screen flex flex-col bg-bg">
         <TopBar />
         <GlobalOfflineBanner />
+        {/* v1.8 P0-A1: 订阅主进程原生 Menu / 快捷键触发的路由跳转 */}
+        <DesktopNavigator />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/discuss" element={<Discuss />} />

@@ -21,9 +21,13 @@ import { ReportToc } from '../components/ReportToc';
 import { Tooltip } from '../components/Tooltip';
 import { ResearchLoadingPanel } from '../components/ResearchLoadingPanel';
 import { SourceContributionCard } from '../components/SourceContributionCard';
+import { Container } from '../components/Container';
+import { PaperSizePicker } from '../components/PaperSizePicker';
 import { api } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
+import { useDesktopApi } from '../hooks/useDesktopApi';
 import { explainError } from '../lib/errorMessages';
+import { applyPaperSize, loadPdfPreferences } from '../lib/pdfPreferences';
 import type {
   DocsJob,
   BpJob,
@@ -338,6 +342,8 @@ export function Report() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const dialog = useDialog();
+    /** v1.8 P0-A3: 集中消费桌面端 API,避免散落 window.insightforge?.openPath / saveDir */
+    const desktop = useDesktopApi();
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** 导出中状态:'md'/'pdf'/'json'/null */
@@ -623,12 +629,13 @@ export function Report() {
       prev === 'running' &&
       bpJob.status === 'success' &&
       bpJob.archive_path &&
-      window.insightforge?.openPath
+      desktop.isDesktop
     ) {
       // 异步打开,不阻塞后续逻辑
-      void window.insightforge.openPath(`${bpJob.archive_path}\\00-封面与目录.md`);
+      const sep = desktop.platform === 'darwin' ? '/' : '\\';
+      void desktop.openPath(`${bpJob.archive_path}${sep}00-封面与目录.md`);
     }
-  }, [bpJob?.status, bpJob?.archive_path]);
+  }, [bpJob?.status, bpJob?.archive_path, desktop.isDesktop, desktop.platform]);
 
   const isCompleted = report !== null;
   const isAnalyzing = loading && !report;
@@ -844,7 +851,7 @@ export function Report() {
   /** 用系统默认程序打开归档文件(桌面端) */
   const openArchiveFile = async (file: string) => {
     if (!projectArchive) return;
-    if (!window.insightforge?.openPath) {
+    if (!desktop.isDesktop) {
       await dialog.alert({
         title: '桌面端专属功能',
         message: '仅桌面端支持直接打开归档文件。',
@@ -852,8 +859,9 @@ export function Report() {
       });
       return;
     }
-    const fullPath = `${projectArchive.dir}\\${file}`;
-    const res = await window.insightforge.openPath(fullPath);
+    const sep = desktop.platform === 'darwin' ? '/' : '\\';
+    const fullPath = `${projectArchive.dir}${sep}${file}`;
+    const res = await desktop.openPath(fullPath);
     if (!res?.ok) {
       await dialog.alert({
         title: '打开失败',
@@ -907,7 +915,7 @@ export function Report() {
 
   if (loadError) {
     return (
-      <main className="flex-1 px-6 py-10 max-w-3xl mx-auto">
+      <Container size="md">
         <Card>
           <div className="text-red-600">加载失败:{loadError}</div>
           <div className="mt-4">
@@ -916,7 +924,7 @@ export function Report() {
             </Button>
           </div>
         </Card>
-      </main>
+      </Container>
     );
   }
 
@@ -975,7 +983,7 @@ export function Report() {
       )}
 
       {/* 主内容区 */}
-      <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
+      <Container size="md">
         <div className="mb-6 flex items-center justify-between">
           <Button variant="text" onClick={() => navigate('/')}>
             ← 返回首页
@@ -2048,7 +2056,11 @@ export function Report() {
                       },
                       {
                         label: '🖨️ 打印报告',
-                        onClick: () => window.print(),
+                        // v1.8 P1-D: 打印按钮套用当前纸张偏好
+                        onClick: () => {
+                          applyPaperSize(loadPdfPreferences());
+                          window.print();
+                        },
                       },
                     ]}
                   />
@@ -2084,6 +2096,9 @@ export function Report() {
                       },
                     ]}
                   />
+
+                  {/* v1.8 P1-D: 纸张选择 - 与"导出"并列,便于在导出 PDF/打印前切换纸张大小/方向 */}
+                  <PaperSizePicker disabled={exportBusy !== null} />
 
                   <span className="hidden md:inline-block w-px h-6 bg-border mx-1" aria-hidden />
 
@@ -2315,7 +2330,7 @@ export function Report() {
           }}
           onGoSettings={() => navigate('/settings')}
         />
-      </main>
+      </Container>
 
       {/* 重新调研确认弹窗 */}
       {showReResearch && (
@@ -2553,6 +2568,10 @@ export function Report() {
    */
   async function handleExport(format: 'md' | 'pdf'): Promise<void> {
     if (!id) return;
+    // v1.8 P1-D: PDF/打印前确保 @page 注入当前偏好(后端 Chromium 与浏览器打印都尊重 @page)
+    if (format === 'pdf') {
+      applyPaperSize(loadPdfPreferences());
+    }
     setExportBusy(format);
     setExportProgress({ format, startedAt: Date.now(), phase: 'connecting' });
     try {
@@ -2612,6 +2631,8 @@ export function Report() {
           tone: 'warning',
         });
         if (useBrowserPrint) {
+          // v1.8 P1-D: 打印降级路径也要套用用户纸张偏好
+          applyPaperSize(loadPdfPreferences());
           window.print();
         }
       } else {
@@ -2727,7 +2748,7 @@ export function Report() {
         });
         return;
       }
-      if (!window.insightforge?.saveDir) {
+      if (!desktop.isDesktop || !desktop.saveDir) {
         await dialog.alert({
           title: '桌面端专属功能',
           message: '“另存商业计划书”仅在桌面端可用。',
@@ -2738,7 +2759,7 @@ export function Report() {
       setBpSaving(true);
       try {
         const safeName = (project?.name ?? '项目').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
-        const res = await window.insightforge.saveDir({
+        const res = await desktop.saveDir({
           sourceDir: bpJob.archive_path,
           defaultName: `${safeName}-商业计划书`,
         });

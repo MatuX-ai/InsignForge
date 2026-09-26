@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
+import { Container } from '../components/Container';
 import { api } from '../lib/api';
 
 export function AuthCallback() {
@@ -46,7 +47,7 @@ export function AuthCallback() {
   }, [navigate]);
 
   return (
-    <main className="flex-1 px-6 py-10 max-w-md mx-auto w-full">
+    <Container size="sm">
       <Card title="登录回调">
         {status === 'loading' && (
           <div className="text-helper text-text-secondary">
@@ -70,6 +71,6 @@ export function AuthCallback() {
           </div>
         )}
       </Card>
-    </main>
+    </Container>
   );
 }

@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
+import { Container } from '../components/Container';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { api } from '../lib/api';
 import {
@@ -79,6 +80,8 @@ export function Settings() {
   const [offlineMode, setOfflineMode] = useLocalStorage<boolean>('offline_mode', false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** v1.8 P1-A: 保存中 loading 状态 - 禁用按钮 + 锁定表单防重复提交 */
+  const [saving, setSaving] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
 
@@ -174,6 +177,8 @@ export function Settings() {
 
   // 保存:同时写入 localStorage 与后端
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     setSaveError(null);
     setSaved(false);
     try {
@@ -240,12 +245,35 @@ export function Settings() {
       window.setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      // v1.8 P1-A: 无论成功失败都解除 saving,失败时保存按钮回到 disabled 但可重试
+      setSaving(false);
     }
   };
 
   // 离线模式已生效时,在「离线模式」卡片顶部显示高优先级提醒,避免用户以为"开着但没用"
+  // v1.8 P1-E: 增加「复制诊断」一键导出上下文 + 「滚动到开关」快速操作
   const offlineModeNotice = offlineMode ? (
-    <Banner tone="error" title="离线模式已生效">
+    <Banner
+      tone="error"
+      title="离线模式已生效"
+      action={{
+        label: '前往关闭 →',
+        onClick: () => scrollToOfflineSwitch(),
+      }}
+      copyLabel="复制诊断"
+      copyText={
+        `[InsightForge 离线模式诊断]\n` +
+        `时间: ${new Date().toISOString()}\n` +
+        `离线模式: 已开启(用户切换)\n` +
+        `LLM Provider: ${settings.llmProvider}\n` +
+        `LLM Model: ${settings.llmModel}\n` +
+        `代理: ${proxyEnabled ? `${proxyUrl}` : '未开启'}\n` +
+        `后端地址: ${typeof window !== 'undefined' ? window.location.origin : 'n/a'}\n` +
+        `提示: 离线模式会拒绝外部 API,只有本地 Ollama 与本地缓存可用。\n` +
+        `若希望恢复外部 API 调用,请在此页关闭离线模式并保存。`
+      }
+    >
       所有外部 API 调用(大模型 / 搜索引擎)将被拒绝,
       只会使用本地 Ollama 与本地历史缓存。市场调研质量会显著下降,需要时回到此处关闭。
     </Banner>
@@ -256,26 +284,75 @@ export function Settings() {
    *   - 如果当前 LLM provider 是需要外部 API 的(非 Ollama),
    *     在离线时调用会报 MissingLlmApiKeyError / OFFLINE_MODE_BLOCKED。
    *   - 在「离线模式」卡片下方显示黄色警告 + 一键切换建议。
+   *   - v1.8 P1-E: 加「去切换」action +「复制诊断」双动作
    */
   const offlineLlmWarning =
     offlineMode && settings.llmProvider !== 'ollama' ? (
-      <Banner tone="warning" title="当前 LLM 不可用,请切换到 Ollama">
+      <Banner
+        tone="warning"
+        title="当前 LLM 不可用,请切换到 Ollama"
+        action={{
+          label: '去切换 →',
+          onClick: () => scrollToLlmProvider(),
+        }}
+        copyLabel="复制诊断"
+        copyText={
+          `[InsightForge LLM 诊断]\n` +
+          `离线模式: 已开启\n` +
+          `当前 Provider: ${settings.llmProvider}\n` +
+          `当前 Model: ${settings.llmModel}\n` +
+          `问题: 离线模式下 ${settings.llmProvider} 的外部调用被后端拒绝\n` +
+          `建议: 切换到 Ollama(本地无需 Key),或关闭离线模式\n` +
+          `时间: ${new Date().toISOString()}`
+        }
+      >
         离线模式下 <b>{getLlmProvider(settings.llmProvider)?.label ?? settings.llmProvider}</b> 的外部调用将被拒绝。
         请先在「大模型 API」区块切换到 <b>Ollama</b>(本地无需 Key),然后保存设置。
       </Banner>
     ) : null;
 
   /**
-   * 代理 URL 格式校验:仅允许 http://host:port 或 https://host:port
-   * (SOCKS5 v1.8+ 支持,这里给出明确文字提示)
-   * 校验失败时在输入框下方显示红色提示,并阻止保存按钮变 primary
+   * v1.8 P1-E: 平滑滚动到「离线模式」开关卡片,并自动聚焦开关,
+   * 让 action 按钮点击后有明确的视觉反馈。
+   */
+  const scrollToOfflineSwitch = () => {
+    const el = document.getElementById('settings-offline-toggle');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      const input = el.querySelector<HTMLInputElement>(
+        'input[type="checkbox"], button[role="switch"]',
+      );
+      input?.focus();
+    }, 350);
+  };
+
+  /**
+   * v1.8 P1-E: 滚动到「大模型 API」区块 + 聚焦 Provider 下拉
+   */
+  const scrollToLlmProvider = () => {
+    const el = document.getElementById('settings-llm-provider');
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.setTimeout(() => {
+      const select = el.querySelector<HTMLSelectElement>('select');
+      select?.focus();
+    }, 350);
+  };
+
+  /**
+   * 代理 URL 格式校验 (v1.8 P1-A):
+   *   - http / https / socks5 / socks5h 都允许
+   *   - 后端 proxy-agent 统一处理代理协议,这里仅做基本格式校验
+   *   - 校验失败时在输入框下方显示红色提示,并阻止保存按钮变 primary
    */
   const proxyUrlError = useMemo(() => {
     if (!proxyEnabled) return null;
     const url = proxyUrl.trim();
     if (!url) return '请填写代理地址';
-    if (!/^https?:\/\/[\w.-]+:\d{2,5}$/.test(url)) {
-      return '格式错误:应为 http://host:port 或 https://host:port(SOCKS5 在 v1.8+ 支持)';
+    // v1.8 P1-A: 之前只允许 http/https,与 placeholder "socks5://" 提示冲突
+    if (!/^(https?|socks5?):\/\/[\w.-]+:\d{2,5}$/.test(url)) {
+      return '格式错误:应为 http://host:port / https://host:port / socks5://host:port 之一';
     }
     return null;
   }, [proxyEnabled, proxyUrl]);
@@ -293,7 +370,7 @@ export function Settings() {
   }, [isDirty]);
 
   return (
-    <main className="flex-1 px-6 py-10 max-w-3xl mx-auto w-full">
+    <Container size="md">
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <h1 className="text-title text-text-primary">设置</h1>
         {isDirty && (
@@ -315,7 +392,7 @@ export function Settings() {
         </div>
       )}
 
-      <Card title="大模型 API">
+      <Card title="大模型 API" id="settings-llm-provider">
         <div className="space-y-4">
           <div>
             <label className="text-helper text-text-secondary block mb-1">
@@ -698,7 +775,8 @@ export function Settings() {
       </div>
 
       {/* FR-18: 离线模式开关 */}
-      <div className="my-6">
+      {/* v1.8 P1-E: id=settings-offline-toggle 供 Banner action 滚动锚点 */}
+      <div id="settings-offline-toggle" className="my-6">
         <Card title="离线模式 (FR-18)">
           <div className="space-y-4">
             {offlineModeNotice}
@@ -727,17 +805,20 @@ export function Settings() {
       <div className="flex justify-end gap-2">
         <Button
           onClick={() => void save()}
-          disabled={loadingStatus || !isDirty || isFormInvalid}
-          variant={isDirty && !isFormInvalid ? 'primary' : 'outline'}
+          disabled={loadingStatus || saving || !isDirty || isFormInvalid}
+          loading={saving}
+          variant={isDirty && !isFormInvalid && !saving ? 'primary' : 'outline'}
           title={
             isFormInvalid
               ? '表单存在错误,请检查后再保存'
               : !isDirty
                   ? '当前无变化,无需保存'
-                  : '保存到后端'
+                  : saving
+                    ? '正在保存到后端...'
+                    : '保存到后端'
           }
         >
-          {saved ? '已保存' : isFormInvalid ? '表单有误' : isDirty ? '保存设置' : '无需保存'}
+          {saved ? '已保存' : saving ? '保存中...' : isFormInvalid ? '表单有误' : isDirty ? '保存设置' : '无需保存'}
         </Button>
       </div>
 
@@ -746,7 +827,7 @@ export function Settings() {
         <code className="mx-1 px-1 bg-hover-bg rounded text-primary-light">.env</code>
         文件,后续 LLM 调用将立即使用新 Key,无需重启服务。
       </div>
-    </main>
+    </Container>
   );
 }
 

@@ -2,6 +2,10 @@
 
 > 让每一个好想法在被投入大量资源之前,先得到数据的检验。
 
+> **📝 仓库命名说明**: GitHub 仓库 URL 为 `MatuX-ai/InsignForge`(`In-sighn-Forge`,历史遗留拼写),
+> 但本项目所有文档、代码、UI、品牌均统一使用 **InsightForge**(`In-sight-Forge`)。
+> 两者指代同一个项目,无需困惑。
+
 完全本地化、一键 Docker 启动的市场验证工具箱。在 5 分钟内把一个模糊的产品想法变成有数据支撑的市场报告。
 
 **🌐 官网与下载:[insightforge.dev](https://insightforge.dev)**(参见 [`website/`](./website) 目录)

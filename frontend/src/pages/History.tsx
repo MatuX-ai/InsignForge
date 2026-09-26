@@ -15,10 +15,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import { useDesktopApi } from '../hooks/useDesktopApi';
 import { StatusBadge } from '../components/StatusBadge';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
 import { Modal } from '../components/Modal';
+import { Container } from '../components/Container';
+import { Dropdown } from '../components/Dropdown';
 import { useDialog } from '../components/Dialog';
 import type { Project, HistoryArchives, ProjectSearchHit } from '../types';
 
@@ -165,18 +168,54 @@ export function History() {
   }, [projects]);
 
   // 删除项目
-  const handleDelete = async (projectId: string, projectName: string) => {
+  // v1.8 P2-C: 支持三种模式 - default / clean(同步清理归档)/ export-then-delete(导出后删除)
+  const handleDelete = async (
+    projectId: string,
+    projectName: string,
+    archiveKey: string | null,
+    mode: 'default' | 'clean' | 'export-then-delete'
+  ) => {
+    const modeLabel =
+      mode === 'clean'
+        ? '删除项目并清理归档文件'
+        : mode === 'export-then-delete'
+          ? '导出报告后删除项目'
+          : '删除项目';
+    const modeMessage =
+      mode === 'clean'
+        ? `将永久删除项目"${projectName}"及其历史归档目录(所有生成的商业计划书/开发文档等)。\n此操作不可恢复。`
+        : mode === 'export-then-delete'
+          ? `将先下载报告(${projectName}.md)到本地,然后删除该项目数据库记录。\n历史归档目录会保留。`
+          : `将永久删除项目"${projectName}"的数据库记录。\n历史归档目录会保留。`;
     const ok = await dialog.confirm({
-      title: '删除项目',
-      message: `确定删除项目"${projectName}"吗?\n此操作不可恢复。`,
-      primaryLabel: '删除',
+      title: modeLabel,
+      message: modeMessage,
+      primaryLabel: '确认删除',
       secondaryLabel: '取消',
       tone: 'danger',
     });
     if (!ok) return;
     setDeletingId(projectId);
     try {
+      // 导出后删除: 先下载报告,即使下载失败也不阻塞删除流程
+      if (mode === 'export-then-delete') {
+        try {
+          downloadUrl(api.reportDownloadUrl(projectId, 'md'));
+        } catch (err) {
+          console.warn('[History] 导出报告失败,继续删除:', err);
+        }
+      }
       await api.deleteProject(projectId);
+      // 清理归档(成功后刷新 archives)
+      if (mode === 'clean' && archiveKey) {
+        try {
+          await api.deleteArchive(archiveKey);
+        } catch (err) {
+          console.warn('[History] 清理归档失败:', err);
+        }
+        // 重新拉一次 archives 列表,确保 UI 同步
+        void loadArchives();
+      }
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     } catch (err) {
       await dialog.alert({
@@ -198,7 +237,7 @@ export function History() {
   };
 
   return (
-    <main className="flex-1 px-6 py-10 max-w-4xl mx-auto w-full">
+    <Container size="lg">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-title text-text-primary">历史记录</h1>
         <Button variant="outline" onClick={() => navigate('/')}>
@@ -278,7 +317,14 @@ export function History() {
       {/* 错误提示 */}
       {error && (
         <div className="mb-6">
-          <Banner tone="error" title="加载失败" action={{ label: '重试', onClick: loadProjects }}>
+          <Banner
+            tone="error"
+            title="加载失败"
+            action={{ label: '重试', onClick: loadProjects }}
+            // v1.8 P1-E: 历史页错误诊断 - 路径 + 错误信息 + 时间戳
+            copyLabel="复制诊断"
+            copyText={`[InsightForge 历史页错误诊断]\n时间: ${new Date().toISOString()}\n页面: /history\n后端地址: ${typeof window !== 'undefined' ? window.location.origin : ''}\n错误信息: ${error}`}
+          >
             {error}
           </Banner>
         </div>
@@ -320,18 +366,28 @@ export function History() {
         </div>
       )}
 
-      {/* 项目列表 */}
+      {/* 项目列表 - v1.8 P2-B: 列表项 stagger 渐入 */}
       {!loading && !error && filteredProjects.length > 0 && (
         <div className="space-y-3">
-          {filteredProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              archive={archives[sanitizeArchiveKey(project.name)]}
-              onDelete={handleDelete}
-              deleting={deletingId === project.id}
-            />
-          ))}
+          {filteredProjects.map((project, index) => {
+            const archiveKey = sanitizeArchiveKey(project.name);
+            return (
+              <div
+                key={project.id}
+                className="if-stagger-item"
+                style={{ ['--stagger-i' as string]: Math.min(index, 12) }}
+              >
+                <ProjectCard
+                  project={project}
+                  archive={archives[archiveKey]}
+                  archiveKey={archiveKey}
+                  hasArchive={Boolean(archives[archiveKey])}
+                  onDelete={handleDelete}
+                  deleting={deletingId === project.id}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -413,7 +469,7 @@ export function History() {
           显示 {filteredProjects.length} / {projects.length} 条记录
         </div>
       )}
-    </main>
+    </Container>
   );
 }
 
@@ -480,16 +536,30 @@ function downloadUrl(url: string): void {
 function ProjectCard({
   project,
   archive,
+  archiveKey,
+  hasArchive,
   onDelete,
   deleting,
 }: {
   project: Project;
   archive?: { dir: string; files: string[] };
-  onDelete: (id: string, name: string) => void;
+  /** v1.8 P2-C: sanitize 后的归档目录名(用于「删除并清理归档」场景) */
+  archiveKey: string;
+  /** v1.8 P2-C: 当前项目是否存在归档文件(决定清理菜单是否启用) */
+  hasArchive: boolean;
+  /** v1.8 P2-C: 删除模式 - default / clean / export-then-delete */
+  onDelete: (
+    id: string,
+    name: string,
+    archiveKey: string,
+    mode: 'default' | 'clean' | 'export-then-delete'
+  ) => void;
   deleting: boolean;
 }) {
   const navigate = useNavigate();
   const dialog = useDialog();
+  /** v1.8 P0-A3: 集中消费桌面端 API,避免散落 `window.insightforge?.openPath` */
+  const desktop = useDesktopApi();
   /** v1.7 P2-10: 归档包弹窗 - 不再直接资源管理器默认打开,而让用户从列表选择 */
   const [showArchiveModal, setShowArchiveModal] = useState(false);
 
@@ -500,7 +570,7 @@ function ProjectCard({
   /** 用系统默认程序打开归档文件(桌面端) */
   const handleOpenFile = async (file: string) => {
     if (!archive) return;
-    if (!window.insightforge?.openPath) {
+    if (!desktop.isDesktop) {
       await dialog.alert({
         title: '桌面端专属功能',
         message: '仅桌面端支持直接打开归档文件。',
@@ -508,8 +578,9 @@ function ProjectCard({
       });
       return;
     }
-    const fullPath = `${archive.dir}\\${file}`;
-    const res = await window.insightforge.openPath(fullPath);
+    const sep = desktop.platform === 'darwin' ? '/' : '\\';
+    const fullPath = `${archive.dir}${sep}${file}`;
+    const res = await desktop.openPath(fullPath);
     if (!res?.ok) {
       await dialog.alert({
         title: '打开失败',
@@ -522,7 +593,7 @@ function ProjectCard({
   /** 打开归档文件夹(资源管理器) */
   const handleOpenDir = async () => {
     if (!archive) return;
-    if (!window.insightforge?.openPath) {
+    if (!desktop.isDesktop) {
       await dialog.alert({
         title: '桌面端专属功能',
         message: '仅桌面端支持打开历史文档目录。',
@@ -530,7 +601,7 @@ function ProjectCard({
       });
       return;
     }
-    const res = await window.insightforge.openPath(archive.dir);
+    const res = await desktop.openPath(archive.dir);
     if (!res?.ok) {
       await dialog.alert({
         title: '打开失败',
@@ -672,15 +743,62 @@ function ProjectCard({
           >
             {project.status === 'completed' ? '查看报告 →' : project.status === 'analyzing' ? '查看进度 →' : '开始调研 →'}
           </Link>
-          <button
-            type="button"
-            onClick={() => onDelete(project.id, project.name)}
-            disabled={deleting}
-            className="text-helper text-text-secondary hover:text-red-600 disabled:opacity-50"
-            title="删除项目"
-          >
-            {deleting ? '删除中...' : '🗑️'}
-          </button>
+          {/* v1.8 P2-C: 删除二级菜单 - 删除 / 清理归档后删除 / 导出后删除 */}
+          <Dropdown
+            align="right"
+            panelClassName="min-w-[210px]"
+            trigger={
+              <button
+                type="button"
+                disabled={deleting}
+                className="text-helper text-text-secondary hover:text-red-600 disabled:opacity-50"
+                title="删除项目"
+                aria-label="删除项目"
+              >
+                {deleting ? '删除中...' : '🗑️'}
+              </button>
+            }
+            items={[
+              {
+                label: (
+                  <span className="flex items-center gap-2">
+                    <span>🗑️</span>
+                    <span>删除项目</span>
+                  </span>
+                ),
+                tone: 'default',
+                onClick: () => onDelete(project.id, project.name, archiveKey, 'default'),
+              },
+              {
+                label: (
+                  <span className="flex items-center gap-2">
+                    <span>🧹</span>
+                    <span>删除并清理归档</span>
+                    {hasArchive && (
+                      <span className="ml-auto text-label text-text-tertiary">
+                        {archive?.files.length ?? 0} 个文件
+                      </span>
+                    )}
+                  </span>
+                ),
+                tone: 'danger',
+                disabled: !hasArchive,
+                onClick: () => onDelete(project.id, project.name, archiveKey, 'clean'),
+              },
+              {
+                label: (
+                  <span className="flex items-center gap-2">
+                    <span>📥</span>
+                    <span>导出报告后删除</span>
+                  </span>
+                ),
+                tone: 'danger',
+                // 仅已完成的项目有报告可导出
+                disabled: project.status !== 'completed' || deleting,
+                onClick: () => onDelete(project.id, project.name, archiveKey, 'export-then-delete'),
+              },
+            ]}
+          />
         </div>
       </div>
 
@@ -692,7 +810,7 @@ function ProjectCard({
         onClose={() => setShowArchiveModal(false)}
         title={`历史文档归档 · ${archiveFiles.length} 个文件`}
         secondaryLabel={
-          archive && window.insightforge?.openPath
+          archive && desktop.isDesktop
             ? '打开归档文件夹'
             : archive
               ? '打包下载 .zip' // WARN-04: Web 环境替代行为
@@ -700,7 +818,7 @@ function ProjectCard({
         }
         onSecondary={() => {
           setShowArchiveModal(false);
-          if (window.insightforge?.openPath) {
+          if (desktop.isDesktop) {
             void handleOpenDir();
           } else {
             // WARN-04: Web 版调用后端打包流下载
@@ -716,7 +834,7 @@ function ProjectCard({
             <>
               <div className="text-helper text-text-secondary">
                 点击单个文件可使用系统默认应用打开(桌面端专享)。
-                {window.insightforge?.openPath
+                {desktop.isDesktop
                   ? '点击右上角“打开归档文件夹”可在资源管理器中查看。'
                   : 'Web 版本请点击右上角「打包下载 .zip」一次性带走到本地。'}
               </div>

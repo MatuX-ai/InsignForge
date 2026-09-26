@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
+import { Container } from '../components/Container';
 import { useDialog } from '../components/Dialog';
 import { api } from '../lib/api';
 import type {
@@ -19,6 +20,7 @@ import type {
   DiscussionSession,
 } from '../types';
 
+/** 讨论画布框架模板(v1.7 P2-09: 從 5 个拓展至 10 个,覆盖更丰富的创业 /产品场景) */
 const MODES: Array<{ value: DiscussionMode; label: string; desc: string; emoji: string }> = [
   {
     value: 'business_model',
@@ -49,6 +51,36 @@ const MODES: Array<{ value: DiscussionMode; label: string; desc: string; emoji: 
     label: '自由头脑风暴',
     desc: '不限框架,AI 随讨论自动组织分组',
     emoji: '💡',
+  },
+  {
+    value: 'user_persona',
+    label: '用户画像',
+    desc: '识别核心 1~3 个用户画像:基本信息 / 痛点 / 场景 / 购买动机',
+    emoji: '👤',
+  },
+  {
+    value: 'competitor',
+    label: '竞品拆解',
+    desc: '拆解 3~5 个主要竞品,逐项对比定位 / 功能 / 定价 / 优势劣势',
+    emoji: '🥊',
+  },
+  {
+    value: 'pricing',
+    label: '定价与购买弧',
+    desc: '梳理不同人群 / 场景下的可接受价、付费意愿、增值点',
+    emoji: '💰',
+  },
+  {
+    value: 'gtm',
+    label: 'GTM / 上市策略',
+    desc: '目标客户 / 渠道路径 / 营销钩子 / 转化漏斗 / 首批种子用户获取',
+    emoji: '🎯',
+  },
+  {
+    value: 'mvp_scope',
+    label: 'MVP 范围',
+    desc: '列出「上游会用 / 下游会付钱 / 会推动传播」的三类需求,划分 MVP 边界',
+    emoji: '🧩',
   },
 ];
 
@@ -736,13 +768,24 @@ export function Discuss() {
   // ---------- 选择页 ----------
   if (!currentId || !session) {
     return (
-      <main className="flex-1 px-6 py-8 max-w-5xl w-full mx-auto">
+      <Container size="xl" paddingY="py-8">
         <h1 className="text-title text-text-primary mb-1">讨论梳理</h1>
         <p className="text-body text-text-secondary mb-8">
           和 AI 边聊边梳理,把模糊想法收敛成结构化要点画布,可随时增删改与重组
         </p>
 
-        {error && <div className="mb-4"><Banner tone="error">{error}</Banner></div>}
+        {error && (
+          <div className="mb-4">
+            <Banner
+              tone="error"
+              // v1.8 P1-E: 讨论选择页加「复制诊断」便于排查
+              copyLabel="复制诊断"
+              copyText={`[InsightForge 讨论页选择列表错误诊断]\n时间: ${new Date().toISOString()}\n页面: /discuss\n后端地址: ${typeof window !== 'undefined' ? window.location.origin : ''}\n错误信息: ${error}\nURL参数 id: ${urlId ?? ''}\nURL参数 q: ${searchParams.get('q') ?? ''}`}
+            >
+              {error}
+            </Banner>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* 新建 */}
@@ -856,13 +899,13 @@ export function Discuss() {
             )}
           </div>
         </div>
-      </main>
+      </Container>
     );
   }
 
   // ---------- 工作区 ----------
   return (
-    <main className="flex-1 px-6 py-6 max-w-[1440px] w-full mx-auto flex flex-col min-h-0">
+    <Container display="canvas" maxWidthClass="max-w-[1440px]" paddingY="py-6">
       {/* 头部 */}
       <div className="flex items-center gap-3 mb-4">
         <button
@@ -903,7 +946,30 @@ export function Discuss() {
         </button>
       </div>
 
-      {error && <div className="mb-3"><Banner tone="error">{error}</Banner></div>}
+      {error && (
+        <div className="mb-3">
+          <Banner
+            tone="error"
+            action={{
+              label: '关闭',
+              onClick: () => setError(null),
+            }}
+            // v1.8 P1-E: 讨论工作区错误诊断 - 包含 session id / mode / 模式
+            copyLabel="复制诊断"
+            copyText={
+              `[InsightForge 讨论工作区错误诊断]\n` +
+              `时间: ${new Date().toISOString()}\n` +
+              `页面: /discuss/${currentId ?? ''}\n` +
+              `后端地址: ${typeof window !== 'undefined' ? window.location.origin : ''}\n` +
+              `会话模式: ${session?.mode ?? ''}\n` +
+              `当前 Job 状态: ${job?.status ?? ''} / ${organizeJob?.status ?? ''}\n` +
+              `错误信息: ${error}`
+            }
+          >
+            {error}
+          </Banner>
+        </div>
+      )}
       {notice && (
         <div className="mb-3">
           <Banner tone="success" onClose={() => setNotice(null)}>
@@ -1201,7 +1267,7 @@ export function Discuss() {
           </div>
         </div>
       </div>
-    </main>
+    </Container>
   );
 }
 

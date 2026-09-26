@@ -282,6 +282,22 @@ export const api = {
     `/api/v1/archives/${encodeURIComponent(projectKey)}/download`,
 
   /**
+   * v1.8 P2-C: 删除某个项目的历史归档目录
+   * URL: DELETE /api/v1/archives/:projectKey
+   *
+   *   - 仅清理文件系统,不动数据库项目记录
+   *   - 用于「删除并清理归档」场景: 由 ProjectCard 删除二级菜单触发
+   *   - 归档不存在时服务端返回 removed=false,但仍视为成功(幂等)
+   *   - 调用前应先保证 projectKey 是 sanitizeArchiveKey 后的目录名,
+   *     否则 400
+   */
+  deleteArchive: (projectKey: string) =>
+    request<{ removed: boolean }>(
+      `/archives/${encodeURIComponent(projectKey)}`,
+      { method: 'DELETE' }
+    ),
+
+  /**
    * FR-10 跨项目全文检索:
    *   q     关键词
    *   limit 返回条数上限(默认 30)

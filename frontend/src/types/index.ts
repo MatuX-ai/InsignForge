@@ -560,6 +560,14 @@ declare global {
         targetDir?: string;
         message?: string;
       }>;
+      /** v1.8 P0-A1: 前端调用通知主进程跳转路由;若 path 不是合法字符串则返回 ok:false */
+      navigate: (path: string) => Promise<{ ok: boolean; message?: string }>;
+      /** v1.8 P0-A1: 订阅主进程原生 Menu 触发的路由跳转;返回取消订阅函数 */
+      onNavigate: (cb: (path: string) => void) => () => void;
+      /** v1.8 P0-A2: 弹系统级通知(调研完成/失败/历史归档完成) */
+      notify: (args: { title: string; body?: string; silent?: boolean }) => Promise<{ ok: boolean; message?: string }>;
+      /** v1.8 P0-A6: 复制文本到剪贴板(错误诊断导出) */
+      copy: (text: string) => Promise<{ ok: boolean; message?: string }>;
     };
   }
 }

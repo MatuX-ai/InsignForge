@@ -152,7 +152,7 @@ export function Dropdown({
           ref={menuRef}
           role="menu"
           aria-label="下拉菜单"
-          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} mt-2 min-w-[180px] bg-card-solid/95 backdrop-blur-2xl border border-border rounded-lg shadow-glass z-20 overflow-hidden ${panelClassName}`}
+          className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} mt-2 min-w-[180px] bg-card-solid/95 backdrop-blur-2xl border border-border rounded-lg shadow-glass z-20 overflow-hidden if-panel-rise ${panelClassName}`}
         >
           {items.map((it, i) => (
             <button

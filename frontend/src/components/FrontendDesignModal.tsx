@@ -5,8 +5,12 @@
  *   1. 触发 AI 生成 2-3 套前端设计方案
  *   2. 展示设计风格、交互模式、响应式策略等对比
  *   3. 用户选择一套后确认
+ *
+ * v1.8 P1-B: 重构为复用全局 Modal,统一遮罩 / focus trap / ESC 关闭
  */
 import { useEffect, useState, useRef } from 'react';
+import { Modal } from './Modal';
+import { Button } from './Button';
 import { api } from '../lib/api';
 import type { FrontendDesignPlan, FrontendDesignJob } from '../types';
 
@@ -124,18 +128,37 @@ export function FrontendDesignModal({ open, projectId, onClose, onConfirm }: Pro
   const recommended = job?.result?.recommended ?? null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full max-w-4xl max-h-[85vh] flex flex-col">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="前端设计方案"
+      size="lg"
+      maxHeightClass="max-h-[85vh]"
+      header={
         <div className="p-6 border-b border-border">
           <h2 className="text-section text-text-primary">前端设计方案</h2>
           <p className="text-helper text-text-secondary mt-1">
             AI 基于产品场景和用户画像,为你推荐多套前端设计方案,请选择最适合的一套
           </p>
         </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          {/* 加载中 */}
+      }
+      footer={
+        <div className="flex justify-between items-center w-full">
+          <Button variant="text" onClick={onClose}>
+            暂不选择
+          </Button>
+          <Button
+            onClick={handleConfirm}
+            disabled={!selectedId || confirming || job?.status !== 'success'}
+            loading={confirming}
+          >
+            {confirming ? '确认中...' : selectedId ? '确认选择此方案' : '请选择一套方案'}
+          </Button>
+        </div>
+      }
+      bodyClassName="space-y-4"
+    >
+      {/* 加载中 */}
           {job?.status === 'running' && (
             <div className="text-center py-12">
               <div className="text-body text-text-primary mb-2">{job.current_step}</div>
@@ -154,7 +177,7 @@ export function FrontendDesignModal({ open, projectId, onClose, onConfirm }: Pro
               <div className="text-red-400 mb-4">前端设计方案生成失败:{error}</div>
               <button
                 onClick={triggerGeneration}
-                className="text-primary hover:underline text-[15px]"
+                className="text-primary hover:underline text-[15px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded"
               >
                 重新生成
               </button>
@@ -265,25 +288,7 @@ export function FrontendDesignModal({ open, projectId, onClose, onConfirm }: Pro
               ))}
             </div>
           )}
-        </div>
-
-        <div className="p-6 border-t border-border flex justify-between items-center">
-          <button
-            onClick={onClose}
-            className="h-10 px-4 text-[15px] text-text-secondary hover:text-text-primary transition-colors"
-          >
-            暂不选择
-          </button>
-          <button
-            onClick={handleConfirm}
-            disabled={!selectedId || confirming || job?.status !== 'success'}
-            className="h-10 px-6 text-[15px] font-medium rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white hover:from-primary-light hover:to-primary transition-all shadow-glow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {confirming ? '确认中...' : selectedId ? '确认选择此方案' : '请选择一套方案'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

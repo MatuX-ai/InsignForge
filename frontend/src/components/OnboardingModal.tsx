@@ -4,8 +4,14 @@
  * 行为:
  * - 应用启动时从后端查询 LLM 状态,未配置则弹窗
  * - 用户填写并保存后,自动关闭弹窗
- * - 用户点击"稍后再说"则记住选择,同机器不再弹出
+ * - 用户点击"先跳过，去首页"则记住选择,同机器不再弹出
  * - provider 为 ollama 时跳过(本地模型无需 key)
+ *
+ * v2.0 修复:
+ * - BUG-01: handleSave 现在先调用 updateLlmConfig(provider, model),
+ *           再调用 updateLlmApiKey,确保后端实际生效的是用户当前选择的 provider
+ * - BUG-03: 新增 model 表单状态,切换 provider 时同步重置
+ * - P2-11: 次要按钮文案从"稍后再说"改为"先跳过，去首页",消除"这是可选项"的误解
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -33,6 +39,8 @@ export function OnboardingModal({ onConfigured }: Props) {
 
   // 表单状态(使用 LlmProvider 联合类型,涵盖国产大模型选项)
   const [provider, setProvider] = useState<LlmProvider>('deepseek');
+  // 修复 BUG-03: 显式保存 model 字段,切换 provider 时同步重置为新 provider 的默认值
+  const [model, setModel] = useState<string>(defaultModelFor('deepseek'));
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +58,7 @@ export function OnboardingModal({ onConfigured }: Props) {
           setLoading(false);
           return;
         }
-        // 已配置 key 或用户之前点过"稍后再说",不弹
+        // 已配置 key 或用户之前点过"先跳过，去首页",不弹
         if (s.hasApiKey || dismissed) {
           setLoading(false);
           return;
@@ -61,6 +69,12 @@ export function OnboardingModal({ onConfigured }: Props) {
           setProvider(s.provider as LlmProvider);
         } else {
           setProvider('deepseek');
+        }
+        // 用后端实际生效的 model 回填(若后端有)
+        if (s.model) {
+          setModel(s.model);
+        } else {
+          setModel(defaultModelFor(s.provider as LlmProvider));
         }
       } catch {
         // 后端查询失败静默跳过,不影响主流程
@@ -84,6 +98,11 @@ export function OnboardingModal({ onConfigured }: Props) {
     setError(null);
     setSaving(true);
     try {
+      // 修复 BUG-01: 先切换 provider/model(后端会重建 LLM 单例),
+      // 再写 api-key,避免出现"provider=glm, model=deepseek-chat"这种不一致状态。
+      // 此前的实现只调用 updateLlmApiKey,导致后端仍用旧 provider,误导用户。
+      const cfgRes = await api.updateLlmConfig({ provider, model });
+      if (!cfgRes.ok) throw new Error(cfgRes.message ?? '切换模型失败');
       // 若用户没有显式填 key 但当前 provider 不需要 key,后端写入空字符串等于"使用 .env 默认"
       const res = await api.updateLlmApiKey(trimmed || 'sk-placeholder');
       if (!res.ok) throw new Error(res.message ?? '保存失败');
@@ -124,7 +143,7 @@ export function OnboardingModal({ onConfigured }: Props) {
       tone="primary"
       primaryLabel={saving ? '保存中...' : '保存并开始'}
       onPrimary={handleSave}
-      secondaryLabel="稍后再说"
+      secondaryLabel="先跳过，去首页"
       onSecondary={handleDismiss}
       maskClosable={false}
     >
@@ -139,10 +158,11 @@ export function OnboardingModal({ onConfigured }: Props) {
           value={provider}
           onChange={(e) => {
             const next = e.target.value as LlmProvider;
+            // 修复 BUG-03: 同步把 model 字段重置为新 provider 的默认值,
+            // 避免出现"provider=glm, model=deepseek-chat"这种不一致状态。
+            // 修复 BUG-01 同样依赖于此:handleSave 提交时 model 永远与 provider 匹配。
             setProvider(next);
-            // 切换 provider 时同步重置 model 字段占位,避免不一致状态
-            // (Model 在 API Key 输入模式下是表单状态而非注册,只需更新 hint)
-            void defaultModelFor(next);
+            setModel(defaultModelFor(next));
           }}
           className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
         >
@@ -157,6 +177,17 @@ export function OnboardingModal({ onConfigured }: Props) {
             {currentProviderMeta.description}
           </div>
         )}
+      </div>
+
+      {/* Model 显示(只读提示,引导用户去设置页修改) */}
+      <div className="mt-3">
+        <label className="text-helper text-text-secondary block mb-1">模型</label>
+        <div className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/30 text-body text-text-secondary flex items-center">
+          {model}
+        </div>
+        <div className="text-helper text-text-secondary mt-1">
+          默认模型,可在「设置」页自由调整
+        </div>
       </div>
 
       {/* API Key 输入 */}
@@ -182,12 +213,13 @@ export function OnboardingModal({ onConfigured }: Props) {
             setApiKey(e.target.value);
             setError(null);
           }}
+          // v1.8 P0-A4: 与桌面端习惯一致,小文本输入框 Enter 提交
           onKeyDown={(e) => e.key === 'Enter' && handleSave()}
           placeholder={
             requiresKey ? 'sk-...' : '本地 Ollama 无需 Key,留空即可'
           }
           autoFocus
-          className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+          className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg transition-all"
         />
         {error && <p className="text-helper text-red-400 mt-1">{error}</p>}
         <p className="text-helper text-text-secondary mt-1">
@@ -196,7 +228,7 @@ export function OnboardingModal({ onConfigured }: Props) {
       </div>
 
       <p className="text-helper text-text-secondary mt-3">
-        也可以点击「稍后再说」,之后在设置页手动配置。
+        也可以点击「先跳过，去首页」，之后在首页右上角 → 设置 → 大模型 API 随时回来配置。
       </p>
     </Modal>
   );

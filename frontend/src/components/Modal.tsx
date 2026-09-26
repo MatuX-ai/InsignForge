@@ -4,8 +4,11 @@
  * - 支持 ESC 关闭、点击遮罩关闭
  * - 支持 primary / warning / danger 三种主题
  * - 内置 focus trap:打开时聚焦首按钮,Tab/Shift+Tab 在内部循环,关闭后还原焦点
+ * - v1.8 P1-B: 支持 size 调节宽度 + bodyClassName 让大弹窗复用同一遮罩/焦点逻辑
  */
 import { useEffect, useRef, type ReactNode } from 'react';
+
+type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
 interface Props {
   open: boolean;
@@ -18,7 +21,25 @@ interface Props {
   onSecondary?: () => void;
   maskClosable?: boolean;
   tone?: 'primary' | 'warning' | 'danger';
+  /** v1.8 P1-B: 弹窗宽度 - sm 320 / md 448(default) / lg 672 / xl 896 / full 1280 */
+  size?: ModalSize;
+  /** v1.8 P1-B: body 区域自定义(用于大弹窗需要滚动/全高布局),默认 space-y-2 */
+  bodyClassName?: string;
+  /** v1.8 P1-B: body 区域最大高度(如 max-h-[85vh])。传空表示不限制 */
+  maxHeightClass?: string;
+  /** v1.8 P1-B: 自定义 header 区域(默认 p-6 border-b border-border + h2),设置后会覆盖默认 header */
+  header?: ReactNode;
+  /** v1.8 P1-B: 完全自定义 footer 区域(传了就用自定义,否则用 primary/secondary 按钮) */
+  footer?: ReactNode;
 }
+
+const sizeClassMap: Record<ModalSize, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-4xl',
+  xl: 'max-w-6xl',
+  full: 'max-w-[1280px]',
+};
 
 export function Modal({
   open,
@@ -31,6 +52,11 @@ export function Modal({
   onSecondary,
   maskClosable = true,
   tone = 'primary',
+  size = 'md',
+  bodyClassName,
+  maxHeightClass,
+  header,
+  footer,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -111,51 +137,65 @@ export function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modal-title"
+      aria-labelledby={header ? undefined : 'modal-title'}
     >
-      {/* 遮罩 */}
+      {/* v1.8 P2-B: 遮罩渐入, 默认 180ms ease-out */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm if-backdrop-in"
         onClick={maskClosable ? onClose : undefined}
       />
-      {/* 弹窗本体 - 玻璃拟态 */}
+      {/* v1.8 P2-B: 弹窗主体上浮+渐入,200ms cubic-bezier(0.16, 1, 0.3, 1) */}
       <div
         ref={containerRef}
-        className="relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full max-w-md p-6"
+        className={`relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full ${sizeClassMap[size]} if-panel-rise ${
+          maxHeightClass ? `flex flex-col ${maxHeightClass}` : ''
+        }`}
       >
-        <h2 id="modal-title" className="text-section text-text-primary mb-3 font-semibold">
-          {title}
-        </h2>
-        <div className="text-body text-text-primary mb-6 space-y-2">
+        {header ?? (
+          <h2 id="modal-title" className="text-section text-text-primary mb-3 font-semibold p-6 pb-0">
+            {title}
+          </h2>
+        )}
+        <div
+          className={`text-body text-text-primary p-6 ${
+            maxHeightClass ? 'flex-1 min-h-0 overflow-y-auto' : ''
+          } ${bodyClassName ?? 'space-y-2'}`}
+        >
           {children}
         </div>
-        <div className="flex justify-end gap-2">
-          {secondaryLabel && (
-            <button
-              type="button"
-              onClick={() => {
-                onSecondary?.();
-                onClose();
-              }}
-              className="h-10 px-4 text-body text-text-secondary hover:text-text-primary transition-colors"
-            >
-              {secondaryLabel}
-            </button>
-          )}
-          {primaryLabel && (
-            <button
-              type="button"
-              data-autofocus
-              onClick={() => {
-                onPrimary?.();
-                onClose();
-              }}
-              className={`h-10 px-5 text-body font-medium rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/40 ${primaryClass}`}
-            >
-              {primaryLabel}
-            </button>
-          )}
-        </div>
+        {(footer ?? (primaryLabel || secondaryLabel)) && (
+          <div className="flex justify-end gap-2 p-6 pt-0">
+            {footer ?? (
+              <>
+                {secondaryLabel && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSecondary?.();
+                      onClose();
+                    }}
+                    className="h-10 px-4 text-body text-text-secondary hover:text-text-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg rounded"
+                  >
+                    {secondaryLabel}
+                  </button>
+                )}
+                {primaryLabel && (
+                  <button
+                    type="button"
+                    data-autofocus
+                    onClick={() => {
+                      onPrimary?.();
+                      onClose();
+                    }}
+                    className={`h-10 px-5 text-body font-medium rounded-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg ${primaryClass}`}
+                  >
+                    {primaryLabel}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
