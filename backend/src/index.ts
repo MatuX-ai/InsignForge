@@ -20,6 +20,10 @@ import {
 } from './services/scheduler/index.js';
 import { getSessionMiddleware } from './services/auth/session.js';
 import { getDisabledSourceNotes } from './services/search/sourceWeights.js';
+import {
+  getOfflineMode,
+  getProxyConfig,
+} from './services/SettingsService.js';
 
 const app = express();
 
@@ -111,6 +115,21 @@ const server = app.listen(config.PORT, () => {
     },
     `InsightForge 后端已启动 -> http://localhost:${actualPort}`
   );
+
+  // v1.7.1 P3 增强: 启动期主动报告 FR-18 / FR-08 状态
+  // 避免运维人员忘记服务跑在「离线 / 走代理」状态下
+  if (getOfflineMode()) {
+    logger.warn(
+      '⚠ 离线模式已生效(OFFLINE_MODE=1): 所有外部 API 调用将被拒绝,仅使用本地 Ollama + 本地历史缓存。如需联网请到「设置 → 离线模式」关闭,或重启后端前在 .env 中清空 OFFLINE_MODE'
+    );
+  }
+  const proxyConfig = getProxyConfig();
+  if (proxyConfig) {
+    logger.info(
+      { proxyUrl: proxyConfig.url },
+      '✓ 代理已启用: 所有外部 HTTP/HTTPS 请求将通过该代理转发'
+    );
+  }
   // v1.7: 启动期主动报告「未启用骨架源」名单,便于运维一眼看到哪几个源暂未接实
   const disabled = getDisabledSourceNotes();
   if (disabled.length > 0) {

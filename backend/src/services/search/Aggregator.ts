@@ -25,6 +25,7 @@ import {
   getSearchApiKey,
   assertExternalApiAllowed, // v1.7.1 FR-18: 离线模式守卫
   getProxyConfig, // v1.7.1 FR-08: 代理注入
+  redactProxyUrl, // v1.7.1 P3: 代理 URL 日志脱敏
 } from '../SettingsService.js';
 import { MarketNeedService } from '../MarketNeedService.js';
 import { logger } from '../../logger.js';
@@ -92,7 +93,8 @@ export const Aggregator = {
     // v1.7.1 FR-08: 记录当前代理配置,供后续 client 注入(dispatcher Hints)
     const proxyConfig = getProxyConfig();
     if (proxyConfig) {
-      logger.info({ proxyUrl: proxyConfig.url.replace(/:[^:@/]+@/, ':***@') }, '外部搜索请求将走代理');
+      // getProxyConfig 内部已脱敏;此处再做一次 redact 防御边界
+      logger.info({ proxyUrl: redactProxyUrl(proxyConfig.url) }, '外部搜索请求将走代理');
     }
     logger.info({ keywords, concurrency: KEYWORD_CONCURRENCY }, '开始聚合多源数据(内存模式)');
 

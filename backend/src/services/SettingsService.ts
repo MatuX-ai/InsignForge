@@ -146,15 +146,42 @@ export function assertExternalApiAllowed(caller: string): void {
 /**
  * v1.7.1 FR-08: 获取当前代理配置对象,供 fetch wrapper / SDK 注入
  * 代理 disabled 时返回空对象,代理 enabled 但 url 为空时抛出明确错误
+ *
+ * 返回值已脱敏:`url` 中的 userinfo 密码段被替换为 `***`。
+ * 如需原始 URL 走 fetch,请用 `getProxyUrl()`。
  */
 export function getProxyConfig(): { url: string } | undefined {
   if (!getProxyEnabled()) return undefined;
-  const url = getProxyUrl();
-  if (!url) {
+  const rawUrl = getProxyUrl();
+  if (!rawUrl) {
     logger.warn('PROXY_ENABLED=1 但 PROXY_URL 为空,外部请求将以直连发送');
     return undefined;
   }
-  return { url };
+  return { url: redactProxyUrl(rawUrl) };
+}
+
+/**
+ * v1.7.1 P3 增强:代理 URL 脱敏(防日志泄露 userinfo 密码)
+ *
+ * 行为:
+ *   - http://user:pass@host:port → http://user:***@host:port
+ *   - http://host:port → http://host:port(无密码不改动)
+ *   - socks5://user:pass@... 不在 v1.7.1 范围内,仍按 userinfo 脱敏
+ *
+ * 用法:任何要把代理 URL 写到日志或返回给前端的代码,都应先走此函数。
+ */
+export function redactProxyUrl(proxyUrl: string): string {
+  try {
+    const u = new URL(proxyUrl);
+    if (u.password) {
+      u.password = '***';
+      return u.toString();
+    }
+    return proxyUrl;
+  } catch {
+    // 非标准 URL,降级做宽松脱敏
+    return proxyUrl.replace(/(https?:\/\/[^:@\s]+:)([^@\s]+)(@)/, '$1***$3');
+  }
 }
 
 // ---- 搜索运行时覆盖(设置页可热更新,无需重启) ----

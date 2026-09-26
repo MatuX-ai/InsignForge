@@ -80,6 +80,8 @@ interface SearchHit {
   project: ReturnType<typeof ProjectService.list>[number];
   matchedFields: string[];
   snippets: Record<string, string>;
+  /** v1.7.1 P3: 市场热度 heat_score,用于复合排序的次级权重 */
+  heatScore: number | null;
 }
 
 /**
@@ -181,12 +183,30 @@ projectsRouter.get(
           project,
           matchedFields: Array.from(matched),
           snippets,
+          heatScore: null,
         });
       }
     }
 
-    // 3. 按命中字段数量降序,让最相关的在前
-    hits.sort((a, b) => b.matchedFields.length - a.matchedFields.length);
+    // 3. v1.7.1 P3 增强: 复合排序 - 命中字段数(主) + 市场热度(次) + 创建时间(末)
+    //   思路:
+    //     - 命中字段数越多越相关,优先排在前
+    //     - 同等命中下,市场热度(heat_score)越高的项目排前,避免老项目掩盖新发现
+    //     - 热度也相同时,按创建时间倒序
+    for (const h of hits) {
+      const report = reportMap.get(h.project.id);
+      const heat = (report?.report_data as unknown as { market_heat?: { heat_score?: number } })
+        ?.market_heat?.heat_score;
+      h.heatScore = typeof heat === 'number' ? heat : null;
+    }
+    hits.sort((a, b) => {
+      const fieldDiff = b.matchedFields.length - a.matchedFields.length;
+      if (fieldDiff !== 0) return fieldDiff;
+      const heatDiff = (b.heatScore ?? -1) - (a.heatScore ?? -1);
+      if (heatDiff !== 0) return heatDiff;
+      // 末位:创建时间倒序(最新在前)
+      return new Date(b.project.created_at).getTime() - new Date(a.project.created_at).getTime();
+    });
     const truncated = hits.slice(0, limit);
 
     return ok(res, { hits: truncated, total: hits.length, q });
