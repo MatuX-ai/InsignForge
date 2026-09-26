@@ -21,8 +21,8 @@ export const CHANNELS: Channel[] = [
     audience: '个人创业者 / 产品经理 / 非技术用户',
     description: '无需 Docker、无需 Node.js,下载安装包或便携版即可使用。内置后端子进程,数据写入 %APPDATA%\\InsightForge。',
     installCommands: [
-      { label: 'NSIS 安装程序', command: 'InsightForge-1.0.2-x64.exe' },
-      { label: '便携版(免安装)', command: 'InsightForge-1.0.2-portable-x64.exe' },
+      { label: 'NSIS 安装程序', command: 'InsightForge-1.8.1-x64.exe' },
+      { label: '便携版(免安装)', command: 'InsightForge-1.8.1-portable-x64.exe' },
     ],
     pros: ['零环境依赖', '双击即用', '自动选择端口', '便携版可放 U 盘'],
     href: '#download',

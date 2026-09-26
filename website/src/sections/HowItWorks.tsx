@@ -31,7 +31,7 @@ const STEPS = [
     n: '04',
     icon: 'file',
     title: '报告与落地页',
-    desc: '输出 7 章节报告与可分享的验证落地页 HTML,直接用于假门测试。',
+    desc: '输出 10 章节报告与可分享的验证落地页 HTML,直接用于假门测试。',
     detail: '导出 Markdown / PDF;落地页支持 light / dark 主题与邮箱订阅。',
   },
 ];

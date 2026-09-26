@@ -23,7 +23,7 @@ const SHOTS: Shot[] = [
   {
     id: 'report',
     title: '报告章节导航',
-    caption: '7 章节结构化报告,带侧边栏锚点导航,可滚动浏览,可一键导出 Markdown / PDF。',
+    caption: '10 章节结构化报告,带侧边栏锚点导航,可滚动浏览,可一键导出 Markdown / PDF。',
     src: './screenshots/ambiguous-panel.png',
   },
   {
@@ -111,7 +111,7 @@ export function Screenshots() {
             <ul className="space-y-3 text-sm">
               {[
                 '深色玻璃拟态设计语言,长时间阅读更舒适',
-                '完整 7 章节结构,自带侧边锚点导航',
+                '完整 10 章节结构,自带侧边锚点导航',
                 '支持导出 Markdown / PDF / 落地页 HTML',
               ].map((p) => (
                 <li key={p} className="flex items-start gap-2 text-text-secondary">

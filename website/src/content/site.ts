@@ -6,14 +6,14 @@ export const SITE = {
   name: 'InsightForge',
   tagline: '5 分钟把产品想法变成可决策的市场报告',
   description:
-    '完全本地化、零云依赖的市场验证工具。一句话输入 → 自动多源数据采集 → AI 智能体生成 7 章节结构化报告。',
+    '完全本地化、零云依赖的市场验证工具。一句话输入 → 自动多源数据采集 → AI 智能体生成 10 章节结构化报告。',
   url: 'https://insightforge.dev',
   repo: 'https://github.com/MatuX-ai/InsignForge',
   docs: 'https://github.com/MatuX-ai/InsignForge/blob/main/docs',
   releasesApi: 'https://api.github.com/repos/MatuX-ai/InsignForge/releases/latest',
   license: 'MIT',
-  currentVersion: 'v1.0.2',
-  desktopVersion: '1.0.2',
+  currentVersion: 'v1.8.1',
+  desktopVersion: '1.8.1',
 } as const;
 
 export const NAV_LINKS = [

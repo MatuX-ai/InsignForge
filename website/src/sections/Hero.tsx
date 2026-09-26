@@ -39,7 +39,7 @@ export function Hero() {
             {/* 副标题 */}
             <p className="mt-5 max-w-lg text-base md:text-lg text-text-secondary leading-relaxed">
               完全本地化、零云依赖的市场验证工具。输入一句话想法,
-              自动多源采集数据,AI 智能体生成 7 章节结构化报告,
+              自动多源采集数据,AI 智能体生成 10 章节结构化报告,
               平均 5 分钟拿到决策依据。
             </p>
 
@@ -63,7 +63,7 @@ export function Hero() {
             {/* 元数据列表 - 虚线分隔,呼应样图的边界感 */}
             <dl className="mt-10 grid max-w-md grid-cols-[1fr_auto] gap-y-3 border-t border-dashed border-border pt-5 text-xs">
               <dt className="text-text-tertiary">最近更新</dt>
-              <dd className="font-mono text-text-secondary">2026-08-15</dd>
+              <dd className="font-mono text-text-secondary">2026-09-26</dd>
               <dt className="text-text-tertiary">协议</dt>
               <dd className="font-mono text-text-secondary">MIT · 可商用</dd>
               <dt className="text-text-tertiary">分发渠道</dt>
@@ -116,14 +116,14 @@ function HeroPreview() {
         <div className="text-text-tertiary">
           → 接入数据源 (Reddit · 微博 · 36氪 · Google Trends...)
         </div>
-        <div className="text-text-tertiary">→ 生成 7 章节结构化报告</div>
+        <div className="text-text-tertiary">→ 生成 10 章节结构化报告</div>
         <div className="mt-3 flex items-center gap-2 text-success">
           <span>✓</span>
           <span>报告已生成</span>
           <span className="ml-auto text-text-tertiary">耗时 4m 32s</span>
         </div>
         <div className="mt-3 border-t border-dashed border-border pt-3 text-text-tertiary">
-          report.md · 47 KB · 7 章节 · 0 云依赖
+          report.md · 52 KB · 10 章节 · 0 云依赖
         </div>
       </div>
     </div>

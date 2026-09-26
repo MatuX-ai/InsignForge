@@ -13,7 +13,7 @@ export const FEATURES: Feature[] = [
   {
     icon: 'zap',
     title: '5 分钟拿到决策依据',
-    description: '从一句话想法到 7 章节结构化市场报告,平均 2-5 分钟完成。本地需求库命中时 30 秒内出结果。',
+    description: '从一句话想法到 10 章节结构化市场报告,平均 2-5 分钟完成。本地需求库命中时 30 秒内出结果。',
     highlight: '效率',
   },
   {

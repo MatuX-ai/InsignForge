@@ -12,6 +12,33 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: 'v1.8.1',
+    date: '2026-09-26',
+    title: '文档同步 · 版本号统一 · 品牌资产统一',
+    highlights: [
+      '桌面版无边框窗口自定义顶栏(Windows Traffic Light 内嵌 + 可拖拽区域)',
+      'BUG-01 修复:MISSING_API_KEY 提示与 DeepSeek flash 模型默认开启',
+      '品牌 Logo 统一来源机制(website/frontend/desktop SHA256 一致)',
+      '5 个 package.json 版本号统一到 1.8.1(根/backend/frontend/desktop/website)',
+      'desktop/build.mjs 修复 semver bump 适配(默认不 bump · FORCE_VERSION_BUMP 控制)',
+      'GitHub Release v1.8.1 发布,NSIS 安装包 + 便携版同步上架',
+    ],
+    channel: 'desktop',
+  },
+  {
+    version: 'v1.8.0',
+    date: '2026-09',
+    title: '10 章节报告体系 · 可行性评分 · 落地页升级',
+    highlights: [
+      '报告从 7 章节扩展为 10 章节(新增可行性评分 / 行动建议 / 竞品对比矩阵)',
+      '深度研究模式与多轮次讨论(Discussion) 链路打通',
+      '验证落地页 5.3 节架构迁移落地(可被 Server 端 / Electron 端复用)',
+      '快照测试覆盖扩展 · 后端 typecheck 5 workspace 全部 PASS',
+      '桌面版首次启动引导 + 配置持久化',
+    ],
+    channel: 'all',
+  },
+  {
     version: 'v1.2.0',
     date: '2026-08',
     title: 'UX 优化、可访问性加固、CI 修复',
