@@ -19,6 +19,7 @@ import {
   hashKey,
   withReliability,
 } from './reliability.js';
+import { getProxyUrl, getProxyEnabled } from '../SettingsService.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 const ZHIHU_SEARCH_URL = 'https://www.zhihu.com/api/v4/search_v3';
@@ -102,6 +103,8 @@ export async function searchZhihu(
             maxRetries: 2,
             baseDelayMs: 800,
             maxDelayMs: 3_500,
+            // v1.7.1 FR-08: 代理启用时透传
+            proxyUrl: getProxyEnabled() ? getProxyUrl() : undefined,
           }
         );
         const data = (await res.json()) as ZhihuResponse;

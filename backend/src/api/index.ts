@@ -14,6 +14,7 @@ import { settingsRouter } from './settings.js';
 import { discussionsRouter } from './discussions.js';
 import { archivesRouter } from './archives.js';
 import { adminRouter } from './admin.js';
+import { pluginsRouter } from './plugins.js'; // v1.7.1 FR-13: 插件系统路由
 import { healthRouter } from './health.js';
 import { authRouter } from './auth.js';
 import { attachUser } from '../middleware/auth.js';
@@ -39,6 +40,7 @@ apiRouter.use('/market-needs', marketNeedsRouter);
 apiRouter.use('/settings', settingsRouter);
 apiRouter.use('/discussions', discussionsRouter);
 apiRouter.use('/archives', archivesRouter);
+apiRouter.use('/plugins', pluginsRouter); // v1.7.1 FR-13
 apiRouter.use('/admin', adminRouter);
 // v1.3:多源采集引擎健康检查(路线图阶段 1.1)
 apiRouter.use('/health', healthRouter);

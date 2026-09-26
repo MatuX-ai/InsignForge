@@ -3,6 +3,7 @@
  *
  * POST   /                       创建项目
  * GET    /                       项目列表
+ * GET    /search?q=...           FR-10 跨项目全文检索(name/description/keywords + 报告文本)
  * GET    /:id                    项目详情
  * DELETE /:id                    删除项目
  * GET    /:id/export/markdown    下载报告为 Markdown
@@ -43,6 +44,152 @@ projectsRouter.get(
   asyncHandler((_req, res) => {
     const projects = ProjectService.list();
     return ok(res, projects);
+  })
+);
+
+/**
+ * FR-10: 跨项目全文检索
+ * GET /projects/search?q=...&limit=...
+ *
+ * 匹配范围(OR 关系):
+ *   - 项目元信息: name / description / keywords
+ *   - 报告内容: summary / market_size / competitors[].name / competitors[].description
+ *                / user_persona (任意键) / features (任意键)
+ *
+ * 返回结构:
+ *   {
+ *     hits: Array<{
+ *       project: Project,
+ *       matchedFields: string[],          // 命中了哪些字段,用于前端 highlight
+ *       snippets: { field: '前后 40 字上下文' }
+ *     }>,
+ *     total: number
+ *   }
+ *
+ * 实现说明:
+ *   - 不在 SQLite 层做 FTS5,原因:report_data 是 JSON 文本,FTS 表达式配置代价大;
+ *     项目体量个人版一般 < 5000 条,内存线性扫描已经 < 5ms。
+ *   - 中文不分词,仅做子串匹配;满足“跨项目找一份提到某关键词的报告”的诉求。
+ */
+const searchQuerySchema = z.object({
+  q: z.string().min(1).max(100),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(30),
+});
+
+interface SearchHit {
+  project: ReturnType<typeof ProjectService.list>[number];
+  matchedFields: string[];
+  snippets: Record<string, string>;
+}
+
+/**
+ * 从值集合中递归寻找是否含关键词,并产出截断上下文。
+ * 上下文优先 30 字前后(尽量保证中文 30 字符内)。
+ */
+function collectSnippetsFromValue(
+  value: unknown,
+  q: string,
+  fieldPrefix: string,
+  out: Record<string, string>
+): void {
+  if (value == null) return;
+  if (typeof value === 'string') {
+    const idx = value.toLowerCase().indexOf(q.toLowerCase());
+    if (idx >= 0) {
+      const start = Math.max(0, idx - 30);
+      const end = Math.min(value.length, idx + q.length + 30);
+      const snippet =
+        (start > 0 ? '…' : '') + value.slice(start, end) + (end < value.length ? '…' : '');
+      out[`${fieldPrefix}`] = snippet;
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((item, i) => {
+      collectSnippetsFromValue(item, q, `${fieldPrefix}.${i}`, out);
+    });
+  } else if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      collectSnippetsFromValue(v, q, `${fieldPrefix}.${k}`, out);
+    }
+  }
+}
+
+projectsRouter.get(
+  '/search',
+  asyncHandler<{ query: unknown }>((req, res) => {
+    const parsed = searchQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return fail(res, 400, parsed.error.message);
+    }
+    const { q, limit } = parsed.data;
+    const ql = q.toLowerCase();
+
+    // 1. 拉全量项目元信息 + 全量报告内容
+    const projects = ProjectService.list(10000);
+    const reports = ReportService.listAll();
+    const reportMap = new Map(reports.map((r) => [r.project_id, r]));
+
+    // 2. 对每个项目执行匹配
+    const hits: SearchHit[] = [];
+    for (const project of projects) {
+      const matched = new Set<string>();
+      const snippets: Record<string, string> = {};
+
+      // (a) 项目元信息
+      if (project.name && project.name.toLowerCase().includes(ql)) {
+        matched.add('name');
+        const idx = project.name.toLowerCase().indexOf(ql);
+        snippets.name =
+          (idx > 0 ? '…' : '') +
+          project.name.slice(Math.max(0, idx - 30), Math.min(project.name.length, idx + q.length + 30)) +
+          (idx + q.length < project.name.length ? '…' : '');
+      }
+      if (project.description && project.description.toLowerCase().includes(ql)) {
+        matched.add('description');
+        const idx = project.description.toLowerCase().indexOf(ql);
+        snippets.description =
+          (idx > 0 ? '…' : '') +
+          project.description.slice(
+            Math.max(0, idx - 30),
+            Math.min(project.description.length, idx + q.length + 30)
+          ) +
+          (idx + q.length < project.description.length ? '…' : '');
+      }
+      if (project.keywords && project.keywords.some((k) => k.toLowerCase().includes(ql))) {
+        matched.add('keywords');
+        const hitKw = project.keywords.find((k) => k.toLowerCase().includes(ql));
+        if (hitKw) snippets.keywords = hitKw;
+      }
+
+      // (b) 报告内容
+      const report = reportMap.get(project.id);
+      if (report && report.report_data) {
+        const data = report.report_data as unknown as Record<string, unknown>;
+        const reportSnippets: Record<string, string> = {};
+        for (const key of ['summary', 'market_size', 'competitors', 'user_persona', 'features']) {
+          if (key in data) {
+            collectSnippetsFromValue(data[key], q, `report.${key}`, reportSnippets);
+          }
+        }
+        for (const k of Object.keys(reportSnippets)) {
+          matched.add(k);
+          snippets[k] = reportSnippets[k]!;
+        }
+      }
+
+      if (matched.size > 0) {
+        hits.push({
+          project,
+          matchedFields: Array.from(matched),
+          snippets,
+        });
+      }
+    }
+
+    // 3. 按命中字段数量降序,让最相关的在前
+    hits.sort((a, b) => b.matchedFields.length - a.matchedFields.length);
+    const truncated = hits.slice(0, limit);
+
+    return ok(res, { hits: truncated, total: hits.length, q });
   })
 );
 

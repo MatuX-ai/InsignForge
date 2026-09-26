@@ -18,6 +18,7 @@ import {
   hashKey,
   withReliability,
 } from './reliability.js';
+import { getProxyUrl, getProxyEnabled } from '../SettingsService.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 const JUEJIN_SEARCH_URL = 'https://api.juejin.cn/search_api/v1/search';
@@ -107,6 +108,8 @@ export async function searchJuejin(
             maxRetries: 2,
             baseDelayMs: 800,
             maxDelayMs: 3_500,
+            // v1.7.1 FR-08: 代理启用时透传
+            proxyUrl: getProxyEnabled() ? getProxyUrl() : undefined,
           }
         );
         const data = (await res.json()) as JuejinResponse;

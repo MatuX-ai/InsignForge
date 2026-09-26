@@ -14,6 +14,176 @@
  *   - 全部能力可独立测试,导出 createXxx 系列函数便于 vitest 重置状态
  */
 import { logger } from '../../logger.js';
+import http from 'node:http';
+import https from 'node:https';
+import { URL } from 'node:url';
+// (lib 配置 ES2022 + DOM,fetch 类型由 lib.dom.d.ts 提供)
+
+// ----------------------------------------------------------------------------
+// 0. v1.7.1 FR-08: HTTP 代理转发(零依赖,纯 Node 内置模块)
+//
+// 说明:
+//   - 支持 HTTP 代理(http://host:port)与 HTTPS 代理(https://host:port)
+//   - 对 https:// 目标: 使用 CONNECT 隧道
+//   - 对 http:// 目标: 走代理 host 的绝对 URL
+//   - 不支持 SOCKS5(留给 v1.8+ 引入 undici ProxyAgent)
+//
+// 调用:
+//   fetchViaProxy(targetUrl, options, proxyUrl)
+// 返回与 fetch 相同的 Response 对象(在 happy path 下)
+//
+// 实现位置: 紧邻 reliability.ts 顶部,便于 fetchWithRetry 复用
+// ----------------------------------------------------------------------------
+
+type ProxyFetchOptions = Omit<RequestInit, 'signal'> & {
+  signal?: AbortSignal | null;
+};
+
+/**
+ * 解析代理 URL,返回 proxy host + 协议
+ */
+function parseProxy(proxyUrl: string): { protocol: 'http:' | 'https:'; host: string; port: number } {
+  const u = new URL(proxyUrl);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error(`不支持的代理协议: ${u.protocol} (仅支持 http/https,SOCKS5 见后续版本)`);
+  }
+  return {
+    protocol: u.protocol as 'http:' | 'https:',
+    host: u.hostname,
+    port: u.port ? Number(u.port) : u.protocol === 'https:' ? 443 : 80,
+  };
+}
+
+/**
+ * 把发起请求的 options.headers 转成 Node http 头数组
+ */
+function buildNodeHeaders(init: ProxyFetchOptions | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  const h = init?.headers;
+  if (!h) return out;
+  if (h instanceof Headers) {
+    h.forEach((v, k) => (out[k] = v));
+  } else if (Array.isArray(h)) {
+    for (const [k, v] of h) out[k] = v;
+  } else {
+    for (const k of Object.keys(h)) {
+      const v = (h as Record<string, unknown>)[k];
+      if (v != null) out[k] = String(v);
+    }
+  }
+  // 强制把 host 加上(下游需要)
+  return out;
+}
+
+/**
+ * 通过 HTTP 代理请求(支持 HTTP 与 HTTPS 目标)
+ *
+ * @param proxyUrl http://host:port 或 https://host:port
+ * @param targetUrl 目标 URL(可以是 http/https)
+ * @param init fetch-like options(method/headers/body/signal)
+ */
+function fetchViaHttpProxy(
+  proxyUrl: string,
+  targetUrl: string,
+  init: ProxyFetchOptions = {}
+): Promise<Response> {
+  const target = new URL(targetUrl);
+  const proxy = parseProxy(proxyUrl);
+  const headers = buildNodeHeaders(init);
+  const method = (init.method ?? 'GET').toUpperCase();
+  const body = init.body;
+
+  // 1. HTTP 目标: 直接把绝对 URL 发到代理 host
+  if (target.protocol === 'http:') {
+    return new Promise<Response>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: proxy.host,
+          port: proxy.port,
+          method,
+          path: targetUrl,
+          headers: { ...headers, Host: target.host },
+        },
+        (res) => resolve(intoResponse(res, targetUrl))
+      );
+      req.on('error', reject);
+      if (init.signal) {
+        if (init.signal.aborted) {
+          req.destroy(new Error('Aborted'));
+          return;
+        }
+        init.signal.addEventListener('abort', () => req.destroy(new Error('Aborted')));
+      }
+      if (body != null) req.write(body);
+      req.end();
+    });
+  }
+
+  // 2. HTTPS 目标: CONNECT 隧道
+  return new Promise<Response>((resolve, reject) => {
+    const tunnelReq = http.request({
+      host: proxy.host,
+      port: proxy.port,
+      method: 'CONNECT',
+      path: `${target.hostname}:${target.port || 443}`,
+    });
+    tunnelReq.on('connect', (res, socket) => {
+      if (res.statusCode !== 200) {
+        socket.destroy();
+        reject(new Error(`代理 CONNECT 失败: HTTP ${res.statusCode}`));
+        return;
+      }
+      const httpsReq = https.request(
+        {
+          host: target.hostname,
+          port: target.port || 443,
+          method,
+          path: target.pathname + target.search,
+          headers: { ...headers, Host: target.host },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          agent: new https.Agent({ socket } as any),
+        },
+        (tlsRes) => resolve(intoResponse(tlsRes, targetUrl))
+      );
+      httpsReq.on('error', reject);
+      if (init.signal) {
+        if (init.signal.aborted) {
+          httpsReq.destroy(new Error('Aborted'));
+          return;
+        }
+        init.signal.addEventListener('abort', () => httpsReq.destroy(new Error('Aborted')));
+      }
+      if (body != null) httpsReq.write(body);
+      httpsReq.end();
+    });
+    tunnelReq.on('error', reject);
+    if (init.signal) {
+      if (init.signal.aborted) {
+        tunnelReq.destroy(new Error('Aborted'));
+        return;
+      }
+      init.signal.addEventListener('abort', () => tunnelReq.destroy(new Error('Aborted')));
+    }
+    tunnelReq.end();
+  });
+}
+
+/**
+ * 把 Node IncomingMessage 转换为 Web Response
+ */
+function intoResponse(res: import('node:http').IncomingMessage, url: string): Response {
+  const status = res.statusCode ?? 0;
+  const headers = new Headers();
+  for (const k of Object.keys(res.headers)) {
+    const v = res.headers[k];
+    if (Array.isArray(v)) v.forEach((vv) => headers.append(k, vv));
+    else if (v != null) headers.set(k, String(v));
+  }
+  // 把 IncomingMessage 转为 ReadableStream
+  // @ts-expect-error Node IncomingMessage 兼容 Web ReadableStream
+  const body = res;
+  return new Response(body, { status, headers });
+}
 
 // ----------------------------------------------------------------------------
 // 1. 错误分类
@@ -122,7 +292,7 @@ const DEFAULT_SLEEP = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)
 export async function fetchWithRetry(
   url: string,
   fetchOptions: RequestInit = {},
-  retryOptions: RetryOptions = {}
+  retryOptions: RetryOptions & { proxyUrl?: string } = {}
 ): Promise<Response> {
   const maxRetries = Math.max(0, retryOptions.maxRetries ?? 2);
   const baseDelay = Math.max(0, retryOptions.baseDelayMs ?? 800);
@@ -130,12 +300,20 @@ export async function fetchWithRetry(
   const sleep = retryOptions.sleep ?? DEFAULT_SLEEP;
   const shouldRetry =
     retryOptions.shouldRetry ?? ((err: SourceError) => err.retryable);
+  // v1.7.1 FR-08: 代理 URL 通过此参数透传,实现 HTTP/HTTPS 代理转发
+  const proxyUrl = retryOptions.proxyUrl;
+
+  // v1.7.1 FR-08: 选用 fetch 实现(走代理或直连)
+  const doFetch = (): Promise<Response> =>
+    proxyUrl
+      ? fetchViaHttpProxy(proxyUrl, url, fetchOptions)
+      : fetch(url, fetchOptions);
 
   let lastErr: SourceError | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     retryOptions.onAttempt?.(attempt, lastErr);
     try {
-      const res = await fetch(url, fetchOptions);
+      const res = await doFetch();
       if (res.ok) return res;
       // 非 2xx:分类,按是否可重试决定下一步
       const err = classifyFetchError(null, res.status);

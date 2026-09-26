@@ -418,6 +418,48 @@ export interface HistoryArchiveEntry {
 /** 历史文档归档结构: 项目名 -> 归档条目 */
 export type HistoryArchives = Record<string, HistoryArchiveEntry>;
 
+/**
+ * FR-10: 跨项目全文检索结果(后端 GET /api/v1/projects/search 返回)
+ *
+ * matchedFields 命中字段名,可能值:
+ *   - name: 项目名
+ *   - description: 项目描述
+ *   - keywords: 关键词数组中的某一项
+ *   - report.summary: 报告摘要
+ *   - report.market_size: 市场规模文本
+ *   - report.competitors.<i>.<field>: 竞品条目
+ *   - report.user_persona.<field>: 用户画像条目
+ *   - report.features.<field>: 功能描述
+ *
+ * snippets 是「字段名 -> 截断上下文」,前端可直接渲染展示「哪句话命中了」。
+ */
+export interface ProjectSearchHit {
+  project: Project;
+  matchedFields: string[];
+  snippets: Record<string, string>;
+}
+
+export interface ProjectSearchResult {
+  hits: ProjectSearchHit[];
+  total: number;
+  q: string;
+}
+
+/**
+ * v1.7.1 FR-13: 插件系统元信息(后端 GET /api/v1/plugins 返回)
+ */
+export interface PluginManifest {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  capabilities: string[];
+  source: 'builtin' | 'dsh' | 'external';
+  priority: number;
+  default?: boolean;
+  enabled?: boolean;
+}
+
 /** v1.6: 系统级健康检查响应(后端 GET /api/v1/health/system 返回) */
 export interface SystemHealthDb {
   ok: boolean;
@@ -536,7 +578,19 @@ export interface AppSettings {
 // ---------- 讨论梳理画布 ----------
 
 /** 梳理模式: 商业模式画布 / 精益画布 / SWOT / 软件项目 / 自由头脑风暴 */
-export type DiscussionMode = 'business_model' | 'lean_canvas' | 'swot' | 'project' | 'free';
+/** 讨论模式枚举(v1.7 P2-09: 从 5 个拓展至 10 个)
+ * 与 frontend/src/pages/Discuss.tsx 中 MODES 数组保持一一对应 */
+export type DiscussionMode =
+  | 'business_model'
+  | 'lean_canvas'
+  | 'swot'
+  | 'project'
+  | 'free'
+  | 'user_persona'
+  | 'competitor'
+  | 'pricing'
+  | 'gtm'
+  | 'mvp_scope';
 
 /** 画布要点状态: 草稿 / 已确认 / 待澄清 */
 export type CanvasPointStatus = 'draft' | 'confirmed' | 'question';

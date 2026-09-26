@@ -15,6 +15,7 @@ import {
   hashKey,
   withReliability,
 } from './reliability.js';
+import { getProxyUrl, getProxyEnabled } from '../SettingsService.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 const HN_ALGOLIA_URL = 'https://hn.algolia.com/api/v1/search';
@@ -60,6 +61,8 @@ export async function searchHackerNews(
             maxRetries: 2,
             baseDelayMs: 600,
             maxDelayMs: 3_000,
+            // v1.7.1 FR-08: 代理启用时透传
+            proxyUrl: getProxyEnabled() ? getProxyUrl() : undefined,
           }
         );
         const data = (await res.json()) as HNAlgoliaResponse;

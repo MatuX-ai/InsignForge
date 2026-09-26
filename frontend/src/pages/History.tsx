@@ -6,15 +6,21 @@
  *   - 每条记录显示摘要信息 (热度评分、状态、竞品数等)
  *   - 支持删除项目
  *   - 支持按状态筛选
+ * v1.7 优化 (FR-10):
+ *   - 跨项目全文检索:输入关键词后调后端 /projects/search,
+ *     不仅匹配项目元信息(name/description/keywords),
+ *     还深入匹配报告正文(summary / market_size / competitors / user_persona / features)。
+ *   - 命中字段以「上下文片段」形式返回并以卡片下方的 Quote 形式呈现。
  */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
+import { Modal } from '../components/Modal';
 import { useDialog } from '../components/Dialog';
-import type { Project, HistoryArchives } from '../types';
+import type { Project, HistoryArchives, ProjectSearchHit } from '../types';
 
 type FilterStatus = 'all' | 'completed' | 'analyzing' | 'failed' | 'draft';
 type SortBy = 'time_desc' | 'time_asc' | 'heat_desc' | 'competitors_desc';
@@ -38,11 +44,42 @@ export function History() {
   const [sortBy, setSortBy] = useState<SortBy>('time_desc');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // FR-10: 跨项目全文检索结果(关键词非空时才拉)
+  const [searchHits, setSearchHits] = useState<ProjectSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 加载项目列表 + 历史文档归档状态
   useEffect(() => {
     loadProjects();
     loadArchives();
   }, []);
+
+  // FR-10: 跨项目全文检索 - 300ms debounce,关键词非空时调后端
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    if (!trimmed) {
+      setSearchHits([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    debounceTimer.current = setTimeout(async () => {
+      try {
+        const res = await api.searchProjects(trimmed, 30);
+        setSearchHits(res.hits);
+      } catch {
+        // 后端检索失败时回退到 client-side 行为,不阻塞列表渲染
+        setSearchHits([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [searchQuery]);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -176,7 +213,7 @@ export function History() {
           <div className="flex-1 relative">
             <input
               type="text"
-              placeholder="搜索项目名称、描述或关键词..."
+              placeholder="搜索项目名称、描述、关键词以及报告正文... (跨项目全文检索 v1.7)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full h-10 px-4 pr-10 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
@@ -188,6 +225,11 @@ export function History() {
               >
                 ✕
               </button>
+            )}
+            {searching && (
+              <span className="absolute right-9 top-1/2 -translate-y-1/2 text-helper text-text-tertiary animate-pulse">
+                检索中
+              </span>
             )}
           </div>
 
@@ -293,6 +335,78 @@ export function History() {
         </div>
       )}
 
+      {/* FR-10: 跨项目全文检索结果区,展示报告正文命中上下文 */}
+      {searchQuery.trim() && (
+        <section className="mt-8 border-t border-border/30 pt-6">
+          <header className="mb-3 flex items-center gap-2">
+            <span aria-hidden className="text-primary-light">🔎</span>
+            <h2 className="text-section-title text-text-primary">报告全文命中</h2>
+            <span className="text-helper text-text-secondary">
+              {searching
+                ? '检索中…'
+                : searchHits.length > 0
+                  ? `关键词 “${searchQuery.trim()}” 匹配到 ${searchHits.length} 份报告`
+                  : `未在报告正文中找到 “${searchQuery.trim()}”`}
+            </span>
+          </header>
+
+          {!searching && searchHits.length === 0 && (
+            <div className="bg-card/40 backdrop-blur border border-border rounded-card p-4 text-helper text-text-secondary">
+              提示:尝试调整关键词(支持中英文子串),或在顶部输入框上方的状态筛选中勾选不同状态。
+            </div>
+          )}
+
+          {!searching && searchHits.length > 0 && (
+            <ul className="space-y-3">
+              {searchHits.map((hit) => (
+                <li
+                  key={hit.project.id}
+                  className="bg-card/60 backdrop-blur border border-border rounded-card p-4 shadow-glass"
+                >
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <Link
+                      to={`/report/${hit.project.id}`}
+                      className="text-body text-text-primary hover:text-primary-light font-medium"
+                    >
+                      {hit.project.name}
+                    </Link>
+                    <span className="text-helper text-text-tertiary">
+                      命中 {hit.matchedFields.length} 个字段
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {hit.matchedFields.slice(0, 6).map((f) => (
+                      <span
+                        key={f}
+                        className="inline-flex items-center px-2 py-0.5 text-[11px] rounded-full border border-primary/30 bg-primary/10 text-primary-light"
+                      >
+                        {f}
+                      </span>
+                    ))}
+                    {hit.matchedFields.length > 6 && (
+                      <span className="text-helper text-text-tertiary">
+                        +{hit.matchedFields.length - 6}
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    {Object.entries(hit.snippets).slice(0, 3).map(([field, snippet]) => (
+                      <div
+                        key={field}
+                        className="text-helper text-text-secondary border-l-2 border-primary/30 pl-2"
+                      >
+                        <span className="text-text-tertiary">{field}:</span>{' '}
+                        <HighlightSnippet text={snippet} q={searchQuery.trim()} />
+                      </div>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {/* 底部统计 */}
       {!loading && !error && filteredProjects.length > 0 && (
         <div className="mt-6 text-helper text-text-secondary text-center">
@@ -304,11 +418,62 @@ export function History() {
 }
 
 /**
+ * 高亮片段:把 q 在 text 中所有出现位置用 <mark> 包裹
+ * 用于 FR-10 跨项目全文检索结果区
+ */
+function HighlightSnippet({ text, q }: { text: string; q: string }) {
+  if (!q) return <>{text}</>;
+  const ql = q.toLowerCase();
+  const tl = text.toLowerCase();
+  const parts: Array<{ str: string; match: boolean }> = [];
+  let cursor = 0;
+  let idx = tl.indexOf(ql, cursor);
+  while (idx >= 0) {
+    if (idx > cursor) parts.push({ str: text.slice(cursor, idx), match: false });
+    parts.push({ str: text.slice(idx, idx + q.length), match: true });
+    cursor = idx + q.length;
+    idx = tl.indexOf(ql, cursor);
+  }
+  if (cursor < text.length) parts.push({ str: text.slice(cursor), match: false });
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.match ? (
+          <mark
+            key={i}
+            className="bg-amber-400/30 text-amber-100 px-0.5 rounded"
+          >
+            {p.str}
+          </mark>
+        ) : (
+          <span key={i}>{p.str}</span>
+        )
+      )}
+    </>
+  );
+}
+
+/**
  * 与后端 archive.ts 保持一致的项目名归档键:
  * 移除非法字符 + 截断 60 字符,用于匹配历史文档目录
  */
 function sanitizeArchiveKey(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+}
+
+/**
+ * WARN-04 修复: 直接触发后端下载 URL(相对路径),由浏览器/桌面端原生处理保存
+ * 不走 blob:, 在 Electron 主进程弹出保存对话框期间 HTTP 流不会因 revoke 而失效
+ * 与 Report.tsx 的 downloadUrl 同款实现
+ */
+function downloadUrl(url: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 1000);
 }
 
 /** 单个项目卡片 */
@@ -325,6 +490,8 @@ function ProjectCard({
 }) {
   const navigate = useNavigate();
   const dialog = useDialog();
+  /** v1.7 P2-10: 归档包弹窗 - 不再直接资源管理器默认打开,而让用户从列表选择 */
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
 
   const handleClick = () => {
     navigate(`/report/${project.id}`);
@@ -476,12 +643,16 @@ function ProjectCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-          {/* PDF 图标: 历史文档已生成时展示 */}
+          {/* v1.7 P2-10: 点击归档图标不再直接调资源管理器,
+               而是打开一个 Modal 让用户选择打开哪个文件(或全部浏览)。 */}
           {archiveFiles.length > 0 && (
             <button
               type="button"
-              onClick={() => void handleOpenDir()}
-              title={`历史文档已生成 (${archiveFiles.length} 个文件),点击打开文件夹`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowArchiveModal(true);
+              }}
+              title={`历史文档已生成 (${archiveFiles.length} 个文件),点击查看并打开`}
               className="text-lg text-red-400 hover:text-red-300 transition-colors"
             >
               📄
@@ -512,6 +683,84 @@ function ProjectCard({
           </button>
         </div>
       </div>
+
+      {/* v1.7 P2-10: 归档包预览 Modal - 展示所有文件,让用户选择打开哪个或全部浏览
+           v1.7 WARN-04: Web 环境(没有 openPath 桥接)额外提供「打包下载 .zip」按钮,
+           让 Web 用户也能一次性带走整个项目归档 */}
+      <Modal
+        open={showArchiveModal}
+        onClose={() => setShowArchiveModal(false)}
+        title={`历史文档归档 · ${archiveFiles.length} 个文件`}
+        secondaryLabel={
+          archive && window.insightforge?.openPath
+            ? '打开归档文件夹'
+            : archive
+              ? '打包下载 .zip' // WARN-04: Web 环境替代行为
+              : undefined
+        }
+        onSecondary={() => {
+          setShowArchiveModal(false);
+          if (window.insightforge?.openPath) {
+            void handleOpenDir();
+          } else {
+            // WARN-04: Web 版调用后端打包流下载
+            if (archive) downloadUrl(api.archiveDownloadUrl(archive.dir.split(/[\\/]/).pop() ?? ''));
+          }
+        }}
+        primaryLabel="关闭"
+      >
+        <div className="space-y-2">
+          {!archive ? (
+            <div className="text-helper text-text-secondary">未发现归档</div>
+          ) : (
+            <>
+              <div className="text-helper text-text-secondary">
+                点击单个文件可使用系统默认应用打开(桌面端专享)。
+                {window.insightforge?.openPath
+                  ? '点击右上角“打开归档文件夹”可在资源管理器中查看。'
+                  : 'Web 版本请点击右上角「打包下载 .zip」一次性带走到本地。'}
+              </div>
+              <ul className="border border-border rounded-lg divide-y divide-border bg-card-solid/30 max-h-72 overflow-y-auto">
+                {archiveFiles.map((file) => (
+                  <li
+                    key={file}
+                    className="flex items-center justify-between gap-2 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span aria-hidden className="text-text-tertiary shrink-0">
+                        📄
+                      </span>
+                      <span
+                        className="text-body text-text-primary truncate"
+                        title={file}
+                      >
+                        {file}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // 在弹窗内打开单个文件后不主动关闭,让用户可以连续点多个文件;
+                        // 只有桌面端支持。Web 环境会弹个友好提示。
+                        void handleOpenFile(file);
+                      }}
+                      className="text-helper text-primary hover:underline shrink-0"
+                      title="打开此文件"
+                    >
+                      打开 →
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {archive.dir && (
+                <div className="text-helper text-text-tertiary break-all" title={archive.dir}>
+                  路径:{archive.dir}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

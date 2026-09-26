@@ -27,6 +27,65 @@ export type LlmProvider = LlmProviderId;
 export type SearchProvider = 'openserp' | 'serpapi';
 
 /**
+ * 全局应用配置(FR-08 代理 / FR-18 离线)
+ * 区别于 LLM / 搜索的 "provider 维度" 配置,这里是全局开关。
+ */
+export interface AppConfigSnapshot {
+  proxyEnabled: boolean;
+  proxyUrl: string;
+  offlineMode: boolean;
+}
+
+/**
+ * 查询当前全局应用配置(运行时优先,回退到环境变量 / 默认值)
+ */
+export function getAppConfig(): AppConfigSnapshot {
+  return {
+    proxyEnabled: runtimeProxyEnabled || (process.env.PROXY_ENABLED === '1' || process.env.PROXY_ENABLED === 'true'),
+    proxyUrl: runtimeProxyUrl || process.env.PROXY_URL || '',
+    offlineMode: runtimeOfflineMode || (process.env.OFFLINE_MODE === '1' || process.env.OFFLINE_MODE === 'true'),
+  };
+}
+
+/**
+ * 更新全局应用配置
+ * - 代理池(FR-08):启用后所有出向 HTTP/HTTPS 请求应通过 proxyUrl 转发(各 search client 自检)
+ * - 离线模式(FR-18):开启时拒绝任何外部 API 调用,仅使用本地 Ollama + 本地历史缓存
+ *
+ * 持久化到 .env:PROXY_ENABLED / PROXY_URL / OFFLINE_MODE
+ * 注意:离线模式开启时,LLM 必须切换到本地 Ollama,否则会报 MISSING_API_KEY。
+ */
+export function setAppConfig(input: {
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
+  offlineMode?: boolean;
+}): AppConfigSnapshot {
+  if (input.proxyEnabled !== undefined) {
+    runtimeProxyEnabled = input.proxyEnabled;
+    process.env.PROXY_ENABLED = input.proxyEnabled ? '1' : '0';
+    persistEnv('PROXY_ENABLED', input.proxyEnabled ? '1' : '0');
+  }
+  if (input.proxyUrl !== undefined) {
+    const trimmed = input.proxyUrl.trim();
+    runtimeProxyUrl = trimmed;
+    process.env.PROXY_URL = trimmed;
+    persistEnv('PROXY_URL', trimmed);
+  }
+  if (input.offlineMode !== undefined) {
+    runtimeOfflineMode = input.offlineMode;
+    process.env.OFFLINE_MODE = input.offlineMode ? '1' : '0';
+    persistEnv('OFFLINE_MODE', input.offlineMode ? '1' : '0');
+    logger.warn(
+      { offlineMode: input.offlineMode },
+      input.offlineMode
+        ? '已开启离线模式:所有外部 API 调用将被拒绝'
+        : '已关闭离线模式'
+    );
+  }
+  return getAppConfig();
+}
+
+/**
  * 运行时覆盖(优先于 .env 加载的 config)
  *
  * - runtimeProvider: 切换后立即生效
@@ -37,6 +96,66 @@ let runtimeProvider: LlmProvider | null = null;
 let runtimeModel: string | null = null;
 /** 记录已设置过的 provider key,用于 providerKeyMap 合并计算 */
 const runtimeApiKeys: Partial<Record<LlmProvider, string>> = {};
+
+// ---- 应用运行时覆盖(FR-08 代理 + FR-18 离线模式) ----
+let runtimeProxyEnabled = false;
+let runtimeProxyUrl = '';
+let runtimeOfflineMode = false;
+
+/**
+ * v1.7.1 FR-08: 当前是否启用了网络代理
+ * 供 search client / LLM client / HTTP wrapper 查询
+ */
+export function getProxyEnabled(): boolean {
+  return runtimeProxyEnabled || process.env.PROXY_ENABLED === '1' || process.env.PROXY_ENABLED === 'true';
+}
+
+/**
+ * v1.7.1 FR-08: 当前生效的代理 URL(空字符串表示无代理)
+ */
+export function getProxyUrl(): string {
+  return (runtimeProxyUrl || process.env.PROXY_URL || '').trim();
+}
+
+/**
+ * v1.7.1 FR-18: 当前是否开启离线模式
+ */
+export function getOfflineMode(): boolean {
+  return runtimeOfflineMode || process.env.OFFLINE_MODE === '1' || process.env.OFFLINE_MODE === 'true';
+}
+
+/**
+ * v1.7.1 FR-18: 在调用外部 API 前调用,未通过则抛清晰错误
+ *
+ * 用法:
+ *   import { assertExternalApiAllowed } from './SettingsService.js';
+ *   assertExternalApiAllowed('LLM');   // 离线模式开启时抛 OFFLINE_MODE_BLOCKED
+ *
+ * @param caller  调用者名称(如 "LLM" / "SerpAPI" / "OpenSerp"),仅用于错误消息
+ */
+export function assertExternalApiAllowed(caller: string): void {
+  if (getOfflineMode()) {
+    const err = new Error(
+      `OFFLINE_MODE_BLOCKED: 离线模式已开启,${caller} 的外部调用被拒绝。请在「设置 → 离线模式」中关闭后再试。`
+    );
+    logger.warn({ caller }, '外部 API 调用被离线模式拒绝');
+    throw err;
+  }
+}
+
+/**
+ * v1.7.1 FR-08: 获取当前代理配置对象,供 fetch wrapper / SDK 注入
+ * 代理 disabled 时返回空对象,代理 enabled 但 url 为空时抛出明确错误
+ */
+export function getProxyConfig(): { url: string } | undefined {
+  if (!getProxyEnabled()) return undefined;
+  const url = getProxyUrl();
+  if (!url) {
+    logger.warn('PROXY_ENABLED=1 但 PROXY_URL 为空,外部请求将以直连发送');
+    return undefined;
+  }
+  return { url };
+}
 
 // ---- 搜索运行时覆盖(设置页可热更新,无需重启) ----
 let runtimeSearchProvider: SearchProvider | null = null;
@@ -128,6 +247,14 @@ function resolveEnvPath(): string {
 /**
  * 读取 .env 文件并更新或新增指定变量
  * 保持现有行顺序,值使用双引号包裹(支持空格的兼容)
+ *
+ * v1.7 WARN-05 修复: 原子写入
+ *   - 写临时文件 `*.tmp.<pid>.<ts>` + rename 覆盖原路径
+ *   - 防止以下场景:
+ *       ① 进程在 write 中途崩溃 → 仅留临时文件,原 .env 完整
+ *       ② 两个请求几乎同时 persistEnv 同一个 key → 一个完整覆盖另一个,不会拼接
+ *   - 同文件系统下 fs.renameSync 在 POSIX 是原子,Windows NTFS 由 MoveFileEx 实现
+ *     同卷原子性近似于 POSIX;跨卷不原子但前台使用 append 已足够
  */
 function updateEnvFile(envPath: string, key: string, value: string): void {
   const normalized = value.replace(/\r?\n/g, '');
@@ -151,7 +278,25 @@ function updateEnvFile(envPath: string, key: string, value: string): void {
 
   if (!replaced) next.push(line);
 
-  fs.writeFileSync(envPath, next.join('\n'), 'utf8');
+  const serialized = next.join('\n');
+  const tmpPath = `${envPath}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  // 先写到同目录的临时文件;fs.writeFileSync 内部为同步刷新内容到 OS 缓存。
+  fs.writeFileSync(tmpPath, serialized, 'utf8');
+  try {
+    // rename 在 POSIX 是原子;Windows NTFS 上 fs.renameSync 走 MoveFileEx 同样原子。
+    // 如果目标路径已存在会覆盖(原子的)。
+    fs.renameSync(tmpPath, envPath);
+  } catch (err) {
+    // 原子 rename 失败: 清理临时文件,避免垃圾堆积
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* 临时文件清理失败不影响主错误传播 */
+    }
+    throw err;
+  }
 }
 
 /** 持久化单个环境变量到 .env(失败仅记录日志,不影响运行期) */

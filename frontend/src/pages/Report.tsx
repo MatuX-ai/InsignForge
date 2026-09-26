@@ -238,6 +238,41 @@ function RingProgress({
   );
 }
 
+/**
+ * 数据范围提示卡(用于“市场规模”节)
+ * - ok=true: 绿色对勾
+ * - ok=false + always=true: 始终提示(口径提示)
+ * - ok=false: 橙黄色提醒(数据可能不全)
+ */
+function RangeChip({
+  label,
+  ok,
+  okText,
+  hintText,
+  always,
+}: {
+  label: string;
+  ok: boolean;
+  okText: string;
+  hintText: string;
+  always?: boolean;
+}) {
+  const cls = ok
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+    : always
+      ? 'border-primary/30 bg-primary/10 text-primary-light'
+      : 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+  return (
+    <div className={`flex items-center gap-2 border rounded-lg px-3 py-2 ${cls}`}>
+      <span aria-hidden>{ok ? '✅' : always ? '📌' : '⚠'}</span>
+      <div className="leading-tight">
+        <div className="text-helper text-text-secondary">{label}</div>
+        <div className="text-helper font-medium">{ok ? okText : always ? okText : hintText}</div>
+      </div>
+    </div>
+  );
+}
+
 /** 趋势迷你图组件 - 纯 SVG */
 function TrendSparkline({ trend }: { trend: 'rising' | 'stable' | 'declining' }) {
   const points = useMemo(() => {
@@ -337,6 +372,36 @@ export function Report() {
   const [landingPreview, setLandingPreview] = useState<string | null>(null);
   /** 落地页生成中 */
   const [landingLoading, setLandingLoading] = useState(false);
+  /** v1.7.1 FR-14: 落地页生成配置(CTA / 表单字段 / 主题),空值时后端走智能默认 */
+  const [landingConfig, setLandingConfig] = useState<{
+    call_to_action: string;
+    call_to_action_subtext: string;
+    success_message: string;
+    theme: 'light' | 'dark';
+    fields: Array<{
+      name: string;
+      type: 'email' | 'phone' | 'text';
+      label: string;
+      placeholder: string;
+      required: boolean;
+    }>;
+  }>({
+    call_to_action: '',
+    call_to_action_subtext: '',
+    success_message: '',
+    theme: 'light',
+    fields: [
+      { name: 'email', type: 'email', label: '邮箱', placeholder: 'your@email.com', required: true },
+    ],
+  });
+  /** v1.7.1 FR-13: 当前落地页生成插件元信息(由后端返回时由前端记录) */
+  const [landingPlugin, setLandingPlugin] = useState<{
+    id: string;
+    name: string;
+    version: string;
+    source: 'builtin' | 'dsh' | 'external';
+    priority: number;
+  } | null>(null);
   /** 重新调研确认弹窗 */
   const [showReResearch, setShowReResearch] = useState(false);
   /** 进一步探讨: 正在创建讨论会话 */
@@ -502,6 +567,31 @@ export function Report() {
     });
   }, []);
 
+  // v1.7.1 FR-13: 加载当前生效的落地页插件(供 Modal 头部展示)
+  useEffect(() => {
+    api
+      .listPlugins()
+      .then((plugins) => {
+        // 选 priority 最高的 enabled 插件
+        const enabled = plugins.filter((p) => p.enabled);
+        if (enabled.length === 0) return;
+        enabled.sort((a, b) => b.priority - a.priority);
+        const top = enabled[0];
+        if (top) {
+          setLandingPlugin({
+            id: top.id,
+            name: top.name,
+            version: top.version,
+            source: top.source,
+            priority: top.priority,
+          });
+        }
+      })
+      .catch(() => {
+        // 后端不可用静默
+      });
+  }, []);
+
   // 导出进度计时器:exportProgress 非空时,每秒 +1 显示已用秒数
   useEffect(() => {
     if (exportProgress === null) {
@@ -621,12 +711,39 @@ export function Report() {
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
-  // 生成落地页
+  // 生成落地页(v1.7.1 FR-14: 把 landingConfig 一并带上)
   const handleGenerateLanding = async () => {
     if (!id) return;
     setLandingLoading(true);
     try {
-      const result = await api.generateLanding(id);
+      // 仅传非默认值,避免无谓的请求体体积
+      const c = landingConfig;
+      const overrides: Parameters<typeof api.generateLanding>[1] = {};
+      if (c.theme !== 'light') overrides.theme = c.theme;
+      if (c.call_to_action.trim()) overrides.call_to_action = c.call_to_action.trim();
+      if (c.call_to_action_subtext.trim())
+        overrides.call_to_action_subtext = c.call_to_action_subtext.trim();
+      if (c.success_message.trim()) overrides.success_message = c.success_message.trim();
+      // 表单字段: 只有当用户实际调整时才覆盖
+      const defaultFields = [
+        { name: 'email', type: 'email' as const, label: '邮箱', placeholder: 'your@email.com', required: true },
+      ];
+      const eq = (a: typeof defaultFields[0], b: typeof defaultFields[0]) =>
+        a.name === b.name && a.type === b.type && a.label === b.label &&
+        (a.placeholder ?? '') === (b.placeholder ?? '') && a.required === b.required;
+      const fieldsSame =
+        c.fields.length === defaultFields.length &&
+        c.fields.every((f, i) => eq(f, defaultFields[i]!));
+      if (!fieldsSame) {
+        overrides.form_fields = c.fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          label: f.label,
+          placeholder: f.placeholder || undefined,
+          required: f.required,
+        }));
+      }
+      const result = await api.generateLanding(id, overrides);
       if (result && typeof result === 'object' && 'html' in (result as object)) {
         setLandingPreview((result as { html: string }).html);
       } else {
@@ -985,23 +1102,43 @@ export function Report() {
           </div>
         )}
 
-        {/* 调研失败 Banner - 展示友好错误信息,提供手动重试入口(v1.3 友好化) */}
+        {/* 调研失败 Banner - 展示友好错误信息,提供手动重试入口(v1.3 友好化)
+             v1.7 增强: 根据 friendly.action 派发跳转「设置」/「历史」 */}
         {error && (() => {
-          // 把后端 errorCode 映射为中文友好提示;raw 展示在后端原始 message 处
           const friendly = explainError(errorCode, error);
           const showRetry = friendly.retryable && retryAttempt === 0;
+          // 与 friendly.action 互不冲突: 如果只是 retryable, 只有“重试”按钮;
+          // 如果有 action, 则额外增加一个跳转按钮(如“去设置”)。
+          // 如果 action 类型是 retry 以外, 则隐藏默认的重试按钮以免冗余。
+          let actionLabel: string | undefined;
+          let actionHandler: (() => void) | undefined;
+          switch (friendly.action?.type) {
+            case 'go_settings':
+              actionLabel = '去设置';
+              actionHandler = () => navigate('/settings');
+              break;
+            case 'go_history':
+              actionLabel = '查看历史';
+              actionHandler = () => navigate('/history');
+              break;
+            // 'retry' 与默认重试按钮重复, 不重复渲染
+            default:
+              break;
+          }
+          const action = actionLabel && actionHandler
+            ? { label: actionLabel, onClick: actionHandler }
+            : undefined;
           return (
             <div className="my-6">
               <Banner
                 tone="error"
                 title={friendly.title}
                 action={
-                  showRetry
-                    ? {
-                        label: '重试',
-                        onClick: () => void retry(),
-                      }
-                    : undefined
+                  // 优先级: action(去设置/历史) > 重试
+                  action ??
+                  (showRetry
+                    ? { label: '重试', onClick: () => void retry() }
+                    : undefined)
                 }
               >
                 {friendly.detail}
@@ -1263,11 +1400,14 @@ export function Report() {
               </Card>
             </section>
 
-            {/* 5. 竞品对比矩阵 */}
+            {/* 5. 竞品对比矩阵 - v1.6 增强: 桌面表格 + 移动卡片双视图
+                设计动机: 5 列在 <768px 上被挤压,横向滚动需要左手按住。
+                设计: md 以上表格,md 以下为「每个竞品一张卡片」的堆叠。 */}
             {currentReport.competitors.length >= 2 && (
               <section id="section-compare" className="mt-10 pt-8 border-t border-border/30">
                 <Card title="竞品对比矩阵">
-                  <div className="overflow-x-auto">
+                  {/* 桌面端表格 (md+) */}
+                  <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-sm border-collapse">
                       <thead>
                         <tr className="bg-card-solid/50">
@@ -1357,6 +1497,55 @@ export function Report() {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* 移动端卡片堆叠 (<md) */}
+                  <div className="md:hidden space-y-4">
+                    {currentReport.competitors.map((c, i) => (
+                      <div
+                        key={i}
+                        className="border border-border rounded-lg p-4 bg-card-solid/30"
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="font-medium text-text-primary">{c.name}</div>
+                          {c.url && (
+                            <a
+                              href={c.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-primary text-helper hover:underline shrink-0"
+                            >
+                              官网 →
+                            </a>
+                          )}
+                        </div>
+                        <div className="text-helper text-text-secondary mb-3">{c.description}</div>
+                        {c.strengths && c.strengths.length > 0 && (
+                          <div className="mb-2">
+                            <div className="text-helper font-medium text-emerald-400 mb-1">
+                              ✓ 优势
+                            </div>
+                            <ul className="space-y-0.5 text-helper text-text-primary">
+                              {c.strengths.map((s, si) => (
+                                <li key={si}>· {s}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {c.weaknesses && c.weaknesses.length > 0 && (
+                          <div>
+                            <div className="text-helper font-medium text-red-400 mb-1">
+                              ✗ 劣势
+                            </div>
+                            <ul className="space-y-0.5 text-helper text-text-primary">
+                              {c.weaknesses.map((w, wi) => (
+                                <li key={wi}>· {w}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </Card>
               </section>
             )}
@@ -1379,12 +1568,53 @@ export function Report() {
               </Card>
             </section>
 
-            {/* 7. 市场规模 */}
-            <section id="section-market-size" className="mt-10 pt-8 border-t border-border/30">
-              <Card title="市场规模估算">
-                <p className="text-body">{currentReport.market_size}</p>
-              </Card>
-            </section>
+            {/* 7. 市场规模 - v1.6 增强: 数字+单位+基线年可视化提示,避免"约 8.5 亿"无锚点
+                实现思路:
+                  - 主文本直接 LLM 原文
+                  - 在右侧/下方浮一个"📌 数据范围"提示卡,显式声明估算口径
+                  - 数字粒度提示:含"亿/万/¥/$/%/千/百万"等单位关键字时打勾,缺单位时给警告 */}
+            {(() => {
+              const text = currentReport.market_size ?? '';
+              // v1.7 WARN-02 增强: 涵盖更多单位变体 + 前后修饰
+              //   - 货币符号: ¥ $ € £ ₹ ₩ ₽
+              //   - 量级词: 亿 万 百万 千万 万亿 十亿 兆(可前后拼接数字 / 货币符号)
+              //   - 英文缩写: k M B T(thousand/million/billion/trillion)
+              //   - 百分比与年增: % CAGR YoY
+              const UNIT_PATTERN =
+                /(?:¥|\$|€|£|￥|₩|₹|₽|亿美元|亿人民币|亿美金|百万|千万|万亿|十亿|百亿|千亿|亿|万|k\b|M\b|B\b|T\b|billion|million|trillion|CAGR|YoY|%|％)/i;
+              const YEAR_PATTERN = /(?:20\d{2}|19\d{2})/;
+              const hasUnit = UNIT_PATTERN.test(text);
+              const hasYear = YEAR_PATTERN.test(text);
+              return (
+                <section id="section-market-size" className="mt-10 pt-8 border-t border-border/30">
+                  <Card title="市场规模估算">
+                    <p className="text-body leading-relaxed">{text}</p>
+                    {/* 数据范围提示卡: 让读者一眼看到"这是哪一年 / 什么币种 / 什么口径" */}
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <RangeChip
+                        label="单位"
+                        ok={hasUnit}
+                        okText="已含单位"
+                        hintText="数字缺少单位(亿/万/¥/$ 等)"
+                      />
+                      <RangeChip
+                        label="基线年份"
+                        ok={hasYear}
+                        okText="已含年份"
+                        hintText="未声明数据是哪一年"
+                      />
+                      <RangeChip
+                        label="估算口径"
+                        ok={false}
+                        okText="参考值 · 建议交叉验证"
+                        hintText="估算数据"
+                        always
+                      />
+                    </div>
+                  </Card>
+                </section>
+              );
+            })()}
 
             {/* 8. 风险与机会 */}
             <section id="section-risk-opp" className="mt-10 pt-8 border-t border-border/30">
@@ -1595,6 +1825,207 @@ export function Report() {
               </div>
             )}
 
+            {/* v1.7.1 FR-14: 落地页生成配置 - CTA / 表单字段可定制(默认折叠) */}
+            <details className="mt-4 bg-card/40 backdrop-blur border border-border rounded-card no-print">
+              <summary className="cursor-pointer select-none px-4 py-2 text-helper text-text-secondary hover:text-text-primary list-none flex items-center gap-2">
+                <span aria-hidden>⚙️</span>
+                <span className="font-medium">落地页生成配置</span>
+                <span className="ml-auto text-text-tertiary">展开/收起</span>
+              </summary>
+              <div className="px-4 pb-4 pt-2 space-y-3 border-t border-border">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <label className="block text-helper text-text-secondary">
+                    <span className="block mb-1">按钮文案(留空 → 智能推荐)</span>
+                    <input
+                      type="text"
+                      maxLength={40}
+                      value={landingConfig.call_to_action}
+                      onChange={(e) =>
+                        setLandingConfig((c) => ({ ...c, call_to_action: e.target.value }))
+                      }
+                      placeholder="如:立即订阅 / 免费试用"
+                      className="w-full h-9 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
+                    />
+                  </label>
+                  <label className="block text-helper text-text-secondary">
+                    <span className="block mb-1">按钮下方提示</span>
+                    <input
+                      type="text"
+                      maxLength={120}
+                      value={landingConfig.call_to_action_subtext}
+                      onChange={(e) =>
+                        setLandingConfig((c) => ({ ...c, call_to_action_subtext: e.target.value }))
+                      }
+                      placeholder="如:无需信用卡 · 30 天试用"
+                      className="w-full h-9 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
+                    />
+                  </label>
+                  <label className="block text-helper text-text-secondary">
+                    <span className="block mb-1">提交成功提示</span>
+                    <input
+                      type="text"
+                      maxLength={40}
+                      value={landingConfig.success_message}
+                      onChange={(e) =>
+                        setLandingConfig((c) => ({ ...c, success_message: e.target.value }))
+                      }
+                      placeholder="默认:提交成功,感谢!"
+                      className="w-full h-9 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
+                    />
+                  </label>
+                  <label className="block text-helper text-text-secondary">
+                    <span className="block mb-1">主题</span>
+                    <select
+                      value={landingConfig.theme}
+                      onChange={(e) =>
+                        setLandingConfig((c) => ({
+                          ...c,
+                          theme: e.target.value as 'light' | 'dark',
+                        }))
+                      }
+                      className="w-full h-9 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/60"
+                    >
+                      <option value="light">浅色</option>
+                      <option value="dark">深色</option>
+                    </select>
+                  </label>
+                </div>
+
+                {/* 表单字段列表 */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-helper text-text-secondary">表单字段(最多 5 个)</span>
+                    {landingConfig.fields.length < 5 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLandingConfig((c) => ({
+                            ...c,
+                            fields: [
+                              ...c.fields,
+                              {
+                                name: `field_${c.fields.length + 1}`,
+                                type: 'text',
+                                label: '新字段',
+                                placeholder: '',
+                                required: false,
+                              },
+                            ],
+                          }))
+                        }
+                        className="text-helper text-primary hover:text-primary-light"
+                      >
+                        + 添加字段
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {landingConfig.fields.map((f, i) => (
+                      <div
+                        key={i}
+                        className="grid grid-cols-12 gap-2 items-center bg-card-solid/30 border border-border rounded-lg px-3 py-2"
+                      >
+                        <input
+                          type="text"
+                          value={f.name}
+                          onChange={(e) =>
+                            setLandingConfig((c) => ({
+                              ...c,
+                              fields: c.fields.map((x, j) =>
+                                j === i ? { ...x, name: e.target.value } : x
+                              ),
+                            }))
+                          }
+                          placeholder="name"
+                          className="col-span-2 h-8 px-2 border border-border rounded bg-card-solid/50 text-helper text-text-primary"
+                        />
+                        <select
+                          value={f.type}
+                          onChange={(e) =>
+                            setLandingConfig((c) => ({
+                              ...c,
+                              fields: c.fields.map((x, j) =>
+                                j === i
+                                  ? { ...x, type: e.target.value as 'email' | 'phone' | 'text' }
+                                  : x
+                              ),
+                            }))
+                          }
+                          className="col-span-2 h-8 px-2 border border-border rounded bg-card-solid/50 text-helper text-text-primary"
+                        >
+                          <option value="email">邮箱</option>
+                          <option value="phone">电话</option>
+                          <option value="text">文本</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={f.label}
+                          onChange={(e) =>
+                            setLandingConfig((c) => ({
+                              ...c,
+                              fields: c.fields.map((x, j) =>
+                                j === i ? { ...x, label: e.target.value } : x
+                              ),
+                            }))
+                          }
+                          placeholder="标签"
+                          className="col-span-2 h-8 px-2 border border-border rounded bg-card-solid/50 text-helper text-text-primary"
+                        />
+                        <input
+                          type="text"
+                          value={f.placeholder}
+                          onChange={(e) =>
+                            setLandingConfig((c) => ({
+                              ...c,
+                              fields: c.fields.map((x, j) =>
+                                j === i ? { ...x, placeholder: e.target.value } : x
+                              ),
+                            }))
+                          }
+                          placeholder="placeholder"
+                          className="col-span-4 h-8 px-2 border border-border rounded bg-card-solid/50 text-helper text-text-primary"
+                        />
+                        <label className="col-span-1 inline-flex items-center gap-1 text-helper text-text-secondary">
+                          <input
+                            type="checkbox"
+                            checked={f.required}
+                            onChange={(e) =>
+                              setLandingConfig((c) => ({
+                                ...c,
+                                fields: c.fields.map((x, j) =>
+                                  j === i ? { ...x, required: e.target.checked } : x
+                                ),
+                              }))
+                            }
+                          />
+                          <span>必填</span>
+                        </label>
+                        {landingConfig.fields.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLandingConfig((c) => ({
+                                ...c,
+                                fields: c.fields.filter((_, j) => j !== i),
+                              }))
+                            }
+                            className="col-span-1 h-8 text-text-tertiary hover:text-red-400"
+                            title="删除字段"
+                            aria-label="删除字段"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-helper text-text-tertiary">
+                  提示: 留空所有字段,后端会根据项目名称与价值主张智能推萘 CTA。
+                </p>
+              </div>
+            </details>
+
             {/* 操作按钮区 - 3 类分组:分享/导出 / 流程 / 产物 */}
             <div className="mt-8 no-print">
               <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass px-4 py-3">
@@ -1745,19 +2176,136 @@ export function Report() {
           </>
         )}
 
-        {!isAnalyzing && !currentReport && !loadError && (
-          <Card>
-            <div className="text-text-secondary">该调研尚未开始或已完成但未生成报告</div>
-            <div className="mt-4 flex gap-2">
-              <Link
-                to="/"
-                className="text-primary hover:underline text-[15px]"
-              >
-                ← 返回首页
-              </Link>
-            </div>
-          </Card>
-        )}
+        {/* 三状态区分(代替原“该调研尚未开始或未生成报告”模糊文案)
+             - pending: 项目未启动调研,可点击「开始调研」启动
+             - analyzing-completed-empty: status===completed但 report 为空,可能是中断
+             - failed: status===failed,提供「重试调研」按钮(via friendly action)
+        */}
+        {(() => {
+          const ps = project?.status;
+          const hasReport = currentReport !== null;
+          // isAnalyzing 已经覆盖了「正在加载」状态,这里只处理「无报告」的情况
+          if (isAnalyzing || hasReport || loadError) return null;
+
+          // 优先识别业务状态
+          if (ps === 'completed' || (project && project.report === null && hasReport === false)) {
+            // 调研状态为 completed,却没有 report(可能异常)
+            return (
+              <Card>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl" aria-hidden>📋</span>
+                  <div className="flex-1">
+                    <h3 className="text-body font-medium text-text-primary mb-1">
+                      报告生成不完整
+                    </h3>
+                    <p className="text-helper text-text-secondary mb-4">
+                      项目状态显示为「已完成」，但未能获取到报告内容。
+                      这通常是后端进程意外退出导致。点击下方按钮手动重新调研。
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="primary" onClick={handleReResearch}>
+                        🔄 重新调研
+                      </Button>
+                      <Button variant="outline" onClick={() => setShowVersionSelect(true)}>
+                        ⚙生成开发文档
+                      </Button>
+                      <Button variant="text" onClick={() => navigate('/')}>
+                        ← 返回首页
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          if (ps === 'failed') {
+            return (
+              <Card>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl" aria-hidden>❌</span>
+                  <div className="flex-1">
+                    <h3 className="text-body font-medium text-text-primary mb-1">
+                      上次调研未成功
+                    </h3>
+                    <p className="text-helper text-text-secondary mb-4">
+                      原因可能是数据源不稳定或 LLM 调用失败。可点击重试,也可查看历史记录中的错误详情。
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="primary" onClick={handleReResearch}>
+                        🔄 重试调研
+                      </Button>
+                      <Button variant="text" onClick={() => navigate('/history')}>
+                        → 历史记录
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          if (ps === 'draft' || ps === undefined) {
+            // 未开始调研
+            return (
+              <Card>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl" aria-hidden>✨</span>
+                  <div className="flex-1">
+                    <h3 className="text-body font-medium text-text-primary mb-1">
+                      调研尚未启动
+                    </h3>
+                    <p className="text-helper text-text-secondary mb-4">
+                      点击「开始调研」后,系统将多源采集创意可行性数据,约需 30~90 秒。
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="primary" loading={loading} onClick={() => id && trigger(id)}>
+                        🚀 开始调研
+                      </Button>
+                      <Button variant="text" onClick={() => navigate('/')}>
+                        ← 返回首页
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          if (ps === 'analyzing') {
+            // 状态表示分析中,但 hook 层未处于 loading:重新触发以恢复 polling
+            return (
+              <Card>
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl" aria-hidden>⚙</span>
+                  <div className="flex-1">
+                    <h3 className="text-body font-medium text-text-primary mb-1">
+                      调研状态未同步
+                    </h3>
+                    <p className="text-helper text-text-secondary mb-4">
+                      项目处于“分析中”状态，点击下方按钮重新启动轮询。
+                    </p>
+                    <Button variant="primary" loading={loading} onClick={() => id && trigger(id)}>
+                      重新连接调研进度
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          }
+
+          // 兑底: 原文本
+          return (
+            <Card>
+              <div className="text-text-secondary">该调研尚未开始或未生成报告</div>
+              <div className="mt-4 flex gap-2">
+                <Link to="/" className="text-primary hover:underline text-[15px]">
+                  ← 返回首页
+                </Link>
+              </div>
+            </Card>
+          );
+        })()}
 
         <LlmSetupPrompt
           open={!loading && errorCode === 'MISSING_API_KEY'}
@@ -1794,7 +2342,18 @@ export function Report() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 no-print p-4">
           <div className="bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card w-full max-w-4xl max-h-[90vh] flex flex-col shadow-glass">
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="text-lg font-medium text-text-primary">验证落地页预览</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-medium text-text-primary">验证落地页预览</h3>
+                {landingPlugin && (
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full border border-primary/30 bg-primary/10 text-primary-light"
+                    title={`插件 ${landingPlugin.name} v${landingPlugin.version} · 来源 ${landingPlugin.source} · 优先级 ${landingPlugin.priority}`}
+                  >
+                    <span aria-hidden>🧩</span>
+                    <span>{landingPlugin.name} v{landingPlugin.version}</span>
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" onClick={downloadLanding}>
                   下载 HTML
@@ -2022,11 +2581,33 @@ export function Report() {
         (e.status === 503 || (e.message ?? '').includes('CHROMIUM'));
 
       if (isChromeMissing) {
+        // 检测客户端 OS,以给出对应的“另存为 PDF”步骤指引
+        const os = detectClientOS();
+        const steps = pdfPrintSteps(os);
         const useBrowserPrint = await dialog.confirm({
           title: 'PDF 导出降级',
-          message:
-            '后端未配置 PDF 生成器 (未检测到系统中的 Chrome/Edge/Chromium)。\n是否改用浏览器内置打印?在打印预览对话框选择 "另存为 PDF" 即可。',
-          primaryLabel: '使用浏览器打印',
+          message: (
+            <div className="space-y-3">
+              <p>
+                后端未配置 PDF 生成器（本机未检测到 Chrome / Edge / Chromium）。
+                是否改用浏览器内置打印？只需在打开的打印对话框中选择
+                <span className="font-medium text-text-primary">「另存为 PDF」</span>
+                即可生成 PDF。
+              </p>
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-helper text-amber-200">
+                <div className="font-medium mb-1">📌 当前系统:{osLabel(os)}</div>
+                <ol className="list-decimal pl-5 space-y-0.5">
+                  {steps.map((s, idx) => (
+                    <li key={idx}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+              <p className="text-helper text-text-tertiary">
+                小技巧: “另存为 PDF”一般在打印对话框的左上角“目标打印机”或右下角菜单中。
+              </p>
+            </div>
+          ),
+          primaryLabel: '开始打印',
           secondaryLabel: '取消',
           tone: 'warning',
         });
@@ -2247,4 +2828,77 @@ function sanitizeArchiveKey(name: string): string {
 function truncateDocName(filename: string): string {
   const base = filename.replace(/\.zip$/i, '');
   return base.length > 8 ? `${base.slice(0, 8)}…` : base;
+}
+
+/**
+ * 客户端 OS 探测(用于 PDF 降级时展示对应“另存为 PDF”路径指引)
+ *
+ * 优先级(v1.7 WARN-01 修复):
+ *   1. 桌面端 preload 桥接 window.insightforge?.platform
+ *      - Electron 环境可信度最高(无论 UI 偏好语言 / browser 伪装)
+ *   2. navigator.platform + userAgent 双检
+ *   3. 都不可用时返回 'other'
+ */
+type ClientOS = 'mac' | 'windows' | 'linux' | 'other';
+function detectClientOS(): ClientOS {
+  // 1) Electron 桌面端优先
+  const deskPlatform = (window as unknown as { insightforge?: { platform?: string } })
+    .insightforge?.platform;
+  if (deskPlatform) {
+    const p = deskPlatform.toLowerCase();
+    if (p.includes('darwin') || p.includes('mac')) return 'mac';
+    if (p.includes('win32') || p.includes('win')) return 'windows';
+    if (p.includes('linux')) return 'linux';
+  }
+  // 2) 浏览器环境双检
+  if (typeof navigator === 'undefined') return 'other';
+  const ua = (navigator.userAgent ?? '').toLowerCase();
+  const platform = (navigator.platform ?? '').toLowerCase();
+  if (platform.includes('mac') || ua.includes('mac')) return 'mac';
+  if (platform.includes('win') || ua.includes('windows')) return 'windows';
+  if (platform.includes('linux') || ua.includes('linux')) return 'linux';
+  return 'other';
+}
+
+function osLabel(os: ClientOS): string {
+  switch (os) {
+    case 'mac':
+      return 'macOS';
+    case 'windows':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    default:
+      return '未知系统';
+  }
+}
+
+/** 根据 OS 返回对应的「另存为 PDF」关键步骤文案 */
+function pdfPrintSteps(os: ClientOS): string[] {
+  switch (os) {
+    case 'mac':
+      return [
+        '唤起打印对话框:Command (⌘) + P',
+        '左下角“PDF”下拉菜单 → 选择「存储为 PDF」',
+        '设置文件名与保存路径 → 点「存储」',
+      ];
+    case 'windows':
+      return [
+        '唤起打印对话框:Ctrl + P',
+        '左侧「目标打印机」下拉中选择「另存为 PDF」(Microsoft Print to PDF)',
+        '点「保存」后选择本地路径',
+      ];
+    case 'linux':
+      return [
+        '唤起打印对话框:Ctrl + P',
+        '依据浏览器不同点击“打印到文件”或“另存为 PDF”',
+        '选择本地路径后保存',
+      ];
+    default:
+      return [
+        '打开浏览器菜单 → 打印(或使用 Ctrl/Cmd + P)',
+        '在打印对话框中选择「另存为 PDF」',
+        '设置文件名与路径后保存',
+      ];
+  }
 }

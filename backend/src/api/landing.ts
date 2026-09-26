@@ -3,19 +3,45 @@
  * POST /api/v1/projects/:id/landing
  *
  * 基于市场报告数据自动生成验证落地页 HTML
- * 使用 packages/core 中的 landing 生成器
+ *
+ * v1.7.1 增强 (FR-13):
+ *   - 调用 plugin host (./plugins/host.ts) 而不是直接 generateLanding
+ *   - 当前内置 builtin-landing 插件为兜底实现
+ *   - 后续接入 dsh / 第三方生成器时,在 plugins/host.ts 注册即可
+ *
+ * v1.7.1 增强 (FR-14):
+ *   - 请求体支持可选的 cta / subtext / success_message / form_fields
+ *   - 智能 CTA 推荐(根据 idea / value_proposition 关键词)
+ *   - 表单字段可自定义(默认仅 email)
  */
+import { z } from 'zod';
 import { Router } from 'express';
 import { ProjectService } from '../services/ProjectService.js';
 import { ReportService } from '../services/ReportService.js';
 import { asyncHandler, ok, fail } from './response.js';
-import { generateLanding } from '../utils/landingGenerator.js';
+import { invokeLandingGenerator } from '../plugins/host.js';
+
+const landingFormFieldSchema = z.object({
+  name: z.string().min(1).max(40),
+  type: z.enum(['email', 'phone', 'text']),
+  label: z.string().min(1).max(40),
+  placeholder: z.string().max(80).optional(),
+  required: z.boolean().optional().default(true),
+});
+
+const landingRequestSchema = z.object({
+  theme: z.enum(['light', 'dark']).optional(),
+  call_to_action: z.string().min(1).max(40).optional(),
+  call_to_action_subtext: z.string().max(120).optional(),
+  success_message: z.string().min(1).max(40).optional(),
+  form_fields: z.array(landingFormFieldSchema).min(1).max(5).optional(),
+});
 
 export const landingRouter = Router({ mergeParams: true });
 
 landingRouter.post(
   '/',
-  asyncHandler<{ params: { id: string } }>((req, res) => {
+  asyncHandler<{ params: { id: string }; body: unknown }>(async (req, res) => {
     const project = ProjectService.getById(req.params.id);
     if (!project) return fail(res, 404, '项目不存在', 404);
     if (project.status !== 'completed') {
@@ -33,13 +59,42 @@ landingRouter.post(
     const valueProposition = buildValueProposition(project, report);
     const tagline = buildTagline(report);
 
-    const result = generateLanding({
-      idea: project.name,
-      value_proposition: valueProposition,
-      call_to_action: '加入等待列表',
-      theme: 'light',
-      tagline,
-    });
+    // FR-14: 校验请求体(可选配置)
+    const parsed = landingRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return fail(res, 400, parsed.error.message);
+    }
+    const overrides = parsed.data;
+
+    // FR-13: 通过 plugin host 调用,失败会自动降级到下一个可用插件
+    const result = await invokeLandingGenerator(
+      {
+        project: {
+          id: project.id,
+          name: project.name,
+          description: project.description,
+        },
+        report: {
+          summary: report.summary,
+          market_size: report.market_size,
+          pain_points: report.pain_points,
+          opportunities: report.opportunities,
+          market_heat: report.market_heat,
+        },
+        formFieldsOverride: overrides.form_fields,
+      },
+      {
+        idea: project.name,
+        value_proposition: valueProposition,
+        // FR-14: 不再传固定 call_to_action,交给生成器根据 idea / vp 智能推荐
+        call_to_action: overrides.call_to_action,
+        call_to_action_subtext: overrides.call_to_action_subtext,
+        success_message: overrides.success_message,
+        form_fields: overrides.form_fields,
+        theme: overrides.theme ?? 'light',
+        tagline,
+      }
+    );
 
     return ok(
       res,

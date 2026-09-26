@@ -16,6 +16,7 @@ import {
   hashKey,
   withReliability,
 } from './reliability.js';
+import { getProxyUrl, getProxyEnabled } from '../SettingsService.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 const REDDIT_SEARCH_URL = 'https://www.reddit.com/search.json';
@@ -69,6 +70,8 @@ export async function searchReddit(
             maxRetries: 2,
             baseDelayMs: 800,
             maxDelayMs: 3_500,
+            // v1.7.1 FR-08: 代理启用时透传
+            proxyUrl: getProxyEnabled() ? getProxyUrl() : undefined,
           }
         );
         const data = (await res.json()) as RedditResponse;

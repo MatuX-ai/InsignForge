@@ -20,7 +20,12 @@ import { searchWeibo } from './WeiboClient.js';
 import { searchXiaohongshu } from './XiaohongshuClient.js';
 import { dedupeItems, dedupeBySimilarTitle, DEFAULT_TITLE_DEDUPE_THRESHOLD } from './dedupe.js';
 import { RerankerService } from '../RerankerService.js';
-import { getSearchProvider, getSearchApiKey } from '../SettingsService.js';
+import {
+  getSearchProvider,
+  getSearchApiKey,
+  assertExternalApiAllowed, // v1.7.1 FR-18: 离线模式守卫
+  getProxyConfig, // v1.7.1 FR-08: 代理注入
+} from '../SettingsService.js';
 import { MarketNeedService } from '../MarketNeedService.js';
 import { logger } from '../../logger.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
@@ -82,6 +87,13 @@ export const Aggregator = {
       onSamples?: (samples: RawItem[]) => void;
     } = {}
   ): Promise<RawItem[]> {
+    // v1.7.1 FR-18: 离线模式开启时拒绝任何外部搜索引擎调用
+    assertExternalApiAllowed('搜索引擎');
+    // v1.7.1 FR-08: 记录当前代理配置,供后续 client 注入(dispatcher Hints)
+    const proxyConfig = getProxyConfig();
+    if (proxyConfig) {
+      logger.info({ proxyUrl: proxyConfig.url.replace(/:[^:@/]+@/, ':***@') }, '外部搜索请求将走代理');
+    }
     logger.info({ keywords, concurrency: KEYWORD_CONCURRENCY }, '开始聚合多源数据(内存模式)');
 
     // 搜索引擎按运行时 provider 分流: serpapi(需 Key) / openserp(自托管)

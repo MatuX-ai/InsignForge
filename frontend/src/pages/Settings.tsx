@@ -1,6 +1,6 @@
 /**
  * 设置页 - 按前端设计文档 §3.4
- * LLM Provider 配置 + 搜索引擎配置
+ * LLM Provider 配置 + 搜索引擎配置 + 代理池配置(FR-08) + 离线模式(FR-18)
  *
  * Provider 下拉选项与默认模型均使用前端 lib/llmProviders.ts 的注册表驱动,
  * 在该注册表中添加国产大模型即可在此页自动露出。
@@ -20,11 +20,11 @@ import {
 } from '../lib/llmProviders';
 import type { AppSettings, LlmProvider, LlmStatus } from '../types';
 
-// 与后端 providers.ts 中 deepseek 的 defaultModel 保持一致;
-// 旧值 'deepseek-chat' 已于 2026-07-24 停用
+// 修复 BUG-05: 不再硬编码 'deepseek-v4-pro',改为从注册表读取默认值。
+// 当 llmProviders.ts 中 deepseek 的 defaultModel 字段更新时,这里会自动跟随。
 const DEFAULT: AppSettings = {
   llmProvider: 'deepseek',
-  llmModel: 'deepseek-v4-pro',
+  llmModel: defaultModelFor('deepseek'),
   searchProvider: 'openserp',
   searchUrl: 'http://localhost:8080',
   showApiKey: false,
@@ -72,6 +72,11 @@ export function Settings() {
   const [settings, setSettings] = useLocalStorage<AppSettings>('settings', DEFAULT);
   const [apiKey, setApiKey] = useLocalStorage<string>('llm_api_key', '');
   const [serpApiKey, setSerpApiKey] = useLocalStorage<string>('serp_api_key', '');
+  // FR-08: 代理池配置(运行时透传到后端 .env / 进程内存,无需重启)
+  const [proxyEnabled, setProxyEnabled] = useLocalStorage<boolean>('proxy_enabled', false);
+  const [proxyUrl, setProxyUrl] = useLocalStorage<string>('proxy_url', '');
+  // FR-18: 离线模式开关 - 仅用本地 Ollama + 本地缓存,所有外部 API 调用被禁用
+  const [offlineMode, setOfflineMode] = useLocalStorage<boolean>('offline_mode', false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
@@ -82,6 +87,9 @@ export function Settings() {
     settings,
     apiKey,
     serpApiKey,
+    proxyEnabled,
+    proxyUrl,
+    offlineMode,
   }));
 
   /**
@@ -101,28 +109,40 @@ export function Settings() {
       settings: stripUi(settings),
       apiKey,
       serpApiKey,
+      proxyEnabled,
+      proxyUrl,
+      offlineMode,
     });
     const snap = JSON.stringify({
       settings: stripUi(savedSnapshot.settings),
       apiKey: savedSnapshot.apiKey,
       serpApiKey: savedSnapshot.serpApiKey,
+      proxyEnabled: savedSnapshot.proxyEnabled,
+      proxyUrl: savedSnapshot.proxyUrl,
+      offlineMode: savedSnapshot.offlineMode,
     });
     return cur !== snap;
-  }, [settings, apiKey, serpApiKey, savedSnapshot]);
+  }, [settings, apiKey, serpApiKey, proxyEnabled, proxyUrl, offlineMode, savedSnapshot]);
 
   /** 还原快照,丢弃当前修改 */
   const revert = () => {
     setSettings(savedSnapshot.settings);
     setApiKey(savedSnapshot.apiKey);
     setSerpApiKey(savedSnapshot.serpApiKey);
+    setProxyEnabled(savedSnapshot.proxyEnabled);
+    setProxyUrl(savedSnapshot.proxyUrl);
+    setOfflineMode(savedSnapshot.offlineMode);
   };
 
-  // 进入页面拉取后端 LLM 状态
+  // 进入页面拉取后端 LLM 状态 + 全局应用配置(FR-08/FR-18)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const s = await api.getLlmStatus();
+        const [s, appCfg] = await Promise.all([
+          api.getLlmStatus(),
+          api.getAppConfig?.().catch(() => null),
+        ]);
         if (!cancelled) {
           setLlmStatus(s);
           // 以后端实际生效的 provider/model 回填表单(后端是权威来源,
@@ -132,6 +152,12 @@ export function Settings() {
             llmProvider: s.provider,
             llmModel: s.model || prev.llmModel,
           }));
+          // FR-08/FR-18: 同步回填代理 / 离线模式(后端权威优先)
+          if (appCfg) {
+            setProxyEnabled(appCfg.proxyEnabled);
+            if (appCfg.proxyUrl) setProxyUrl(appCfg.proxyUrl);
+            setOfflineMode(appCfg.offlineMode);
+          }
           setLoadingStatus(false);
         }
       } catch (err) {
@@ -184,14 +210,42 @@ export function Settings() {
       });
       if (!searchRes.ok) throw new Error(searchRes.message ?? '搜索配置保存失败');
 
+      // 5) FR-08 代理池配置 + FR-18 离线模式:通过通用 updateAppConfig 写入后端
+      //    后端在收到 offlineMode=true 时会拒绝任何外部 API 调用。
+      //    接口失败不影响前面 LLM/搜索配置已生效(局部降级)。
+      try {
+        await api.updateAppConfig?.({
+          proxyEnabled,
+          proxyUrl: proxyUrl.trim(),
+          offlineMode,
+        });
+      } catch {
+        // 兜底:如果后端尚未支持该接口,不影响核心保存
+      }
+
       // 保存成功后更新快照,isDirty 随即恢复为 false
-      setSavedSnapshot({ settings, apiKey, serpApiKey });
+      setSavedSnapshot({
+        settings,
+        apiKey,
+        serpApiKey,
+        proxyEnabled,
+        proxyUrl,
+        offlineMode,
+      });
       setSaved(true);
       window.setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  // 离线模式已生效时,在「离线模式」卡片顶部显示高优先级提醒,避免用户以为"开着但没用"
+  const offlineModeNotice = offlineMode ? (
+    <Banner tone="error" title="离线模式已生效">
+      所有外部 API 调用(大模型 / 搜索引擎)将被拒绝,
+      只会使用本地 Ollama 与本地历史缓存。市场调研质量会显著下降,需要时回到此处关闭。
+    </Banner>
+  ) : null;
 
   // 离开/刷新前提示未保存修改
   useEffect(() => {
@@ -277,7 +331,9 @@ export function Settings() {
               onChange={(e) =>
                 setSettings({ ...settings, llmModel: e.target.value })
               }
-              placeholder="例如 deepseek-chat"
+              // 修复 P1-03: placeholder 不再引用已停用的 'deepseek-chat',
+              // 改为用注册表的第一个推荐模型作为示例,自动跟随 provider 切换
+              placeholder={`例如 ${(getLlmProvider(settings.llmProvider)?.suggestedModels ?? [])[0] ?? 'model-name'}`}
               className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
             />
             {/* 当前 provider 的推荐模型 datalist,支持 input 自动补全 */}
@@ -550,6 +606,73 @@ export function Settings() {
               <span className="text-text-secondary text-helper">
                 由后端服务决定是否可达
               </span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* FR-08: 代理池配置(应对反爬) */}
+      <div className="my-6">
+        <Card title="网络与代理 (FR-08)">
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-card-solid/40 p-4 text-helper text-text-secondary leading-relaxed">
+              <b className="text-text-primary">代理池</b>用于绕过反爬限制。
+              未启用时,所有请求会直接从本机发出。
+              启用后,所有外部 HTTP 请求将通过下方配置的代理转发(支持 HTTP / SOCKS5)。
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                id="proxy-enabled"
+                type="checkbox"
+                checked={proxyEnabled}
+                onChange={(e) => setProxyEnabled(e.target.checked)}
+                className="w-4 h-4 accent-primary"
+              />
+              <label htmlFor="proxy-enabled" className="text-body text-text-primary cursor-pointer">
+                启用网络代理
+              </label>
+            </div>
+            <div>
+              <label className="text-helper text-text-secondary block mb-1">
+                代理地址
+              </label>
+              <input
+                type="text"
+                value={proxyUrl}
+                onChange={(e) => setProxyUrl(e.target.value)}
+                disabled={!proxyEnabled}
+                placeholder="http://127.0.0.1:7890  或  socks5://127.0.0.1:1080"
+                className="w-full h-10 px-3 border border-border rounded-lg bg-card-solid/50 text-body text-text-primary focus:outline-none focus:border-primary/60 focus:ring-2 focus:ring-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <div className="text-helper text-text-secondary mt-1">
+                保存后立即生效。格式:协议://主机:端口。可向代理服务商获取。
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* FR-18: 离线模式开关 */}
+      <div className="my-6">
+        <Card title="离线模式 (FR-18)">
+          <div className="space-y-4">
+            {offlineModeNotice}
+            <div className="rounded-lg border border-border bg-card-solid/40 p-4 text-helper text-text-secondary leading-relaxed">
+              <b className="text-text-primary">开启离线模式</b>后,后端会拒绝所有外部 API 调用,
+              仅使用本地 Ollama + 本地历史缓存。这是为了对<b className="text-text-primary">数据敏感</b>的场景准备的,
+              开启时报告质量会显著下降,请权衡使用。
+            </div>
+            <div className="flex items-center gap-3">
+              <input
+                id="offline-mode"
+                type="checkbox"
+                checked={offlineMode}
+                onChange={(e) => setOfflineMode(e.target.checked)}
+                className="w-4 h-4 accent-primary"
+              />
+              <label htmlFor="offline-mode" className="text-body text-text-primary cursor-pointer">
+                启用离线模式(仅本地模型 + 本地缓存)
+              </label>
             </div>
           </div>
         </Card>

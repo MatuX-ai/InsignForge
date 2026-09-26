@@ -18,6 +18,7 @@ import {
   hashKey,
   withReliability,
 } from './reliability.js';
+import { getProxyUrl, getProxyEnabled } from '../SettingsService.js';
 import type { MarketNeed, MarketNeedSource } from '../../types/index.js';
 
 interface SerpApiOrganicResult {
@@ -56,7 +57,13 @@ export async function searchSerpApi(
         const res = await fetchWithRetry(
           url,
           { signal: controller.signal },
-          { maxRetries: 2, baseDelayMs: 1_000, maxDelayMs: 5_000 }
+          {
+            maxRetries: 2,
+            baseDelayMs: 1_000,
+            maxDelayMs: 5_000,
+            // v1.7.1 FR-08: 代理启用时透传
+            proxyUrl: getProxyEnabled() ? getProxyUrl() : undefined,
+          }
         );
         const data = (await res.json()) as SerpApiResponse;
         if (data.error) {

@@ -17,6 +17,7 @@ import {
   getCurrentProvider,
   getCurrentModel,
   resolveLlmApiKey,
+  assertExternalApiAllowed, // v1.7.1 FR-18: 离线模式守卫
 } from '../SettingsService.js';
 import { getLlmProvider } from './providers.js';
 import { buildSchemaPromptSection } from './schemaPrompt.js';
@@ -147,6 +148,8 @@ export async function chatComplete(
   messages: ChatMessage[],
   options: ChatOptions = {}
 ): Promise<string> {
+  // v1.7.1 FR-18: 离线模式开启时拒绝外部 LLM 调用
+  assertExternalApiAllowed(`大模型 (${getCurrentProvider()})`);
   const client = getClient();
   const model = getCurrentModel();
   const provider = getCurrentProvider();

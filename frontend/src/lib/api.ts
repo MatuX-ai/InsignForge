@@ -24,6 +24,8 @@ import type {
   SchedulerStatusResponse,
   SystemHealthResponse,
   AuthMeResponse,
+  ProjectSearchResult,
+  PluginManifest,
 } from '../types';
 
 const BASE = '/api/v1';
@@ -92,10 +94,29 @@ export const api = {
     request<MarketReport>(`/projects/${projectId}/research/report`),
 
   // ----- 落地页生成 -----
-  generateLanding: (projectId: string) =>
+  /**
+   * v1.7.1 FR-14: 落地页生成,支持自定义 CTA / 表单字段 / 主题
+   * options 全可选, 不传则使用后端智能默认值(根据 idea / vp 推萘 CTA)
+   */
+  generateLanding: (
+    projectId: string,
+    options?: {
+      theme?: 'light' | 'dark';
+      call_to_action?: string;
+      call_to_action_subtext?: string;
+      success_message?: string;
+      form_fields?: Array<{
+        name: string;
+        type: 'email' | 'phone' | 'text';
+        label: string;
+        placeholder?: string;
+        required?: boolean;
+      }>;
+    }
+  ) =>
     request<{ html: string; size: number; theme: string; filename: string }>(
       `/projects/${projectId}/landing`,
-      { method: 'POST' }
+      { method: 'POST', body: JSON.stringify(options ?? {}) }
     ),
 
   // ----- 开发文档生成 -----
@@ -253,6 +274,29 @@ export const api = {
   /** 获取历史文档归档结构(项目名 -> 文件列表) */
   getArchives: () => request<HistoryArchives>('/archives'),
 
+  /**
+   * WARN-04 修复: Web 版归档打包下载
+   * 返回相对后端下载路径,在浏览器中触发 anchor.download 即可。
+   */
+  archiveDownloadUrl: (projectKey: string) =>
+    `/api/v1/archives/${encodeURIComponent(projectKey)}/download`,
+
+  /**
+   * FR-10 跨项目全文检索:
+   *   q     关键词
+   *   limit 返回条数上限(默认 30)
+   * 返回 { hits: SearchHit[], total: number, q: string }
+   * hit.snippets 在 UI 上展示「哪句话命中了」
+   */
+  searchProjects: (q: string, limit = 30) =>
+    request<ProjectSearchResult>(`/projects/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+  // ----- 插件系统 (v1.7.1 FR-13) -----
+  /** 列出所有已注册的插件,设置页可查看"当前用哪个生成器" */
+  listPlugins: () => request<PluginManifest[]>('/plugins'),
+  /** 单个插件详情 */
+  getPlugin: (id: string) => request<PluginManifest>(`/plugins/${encodeURIComponent(id)}`),
+
   // ----- 设置 -----
   getLlmStatus: () => request<LlmStatus>('/settings/llm'),
 
@@ -279,6 +323,28 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(input),
     }),
+
+  /**
+   * 更新全局应用配置 - FR-08 代理池 / FR-18 离线模式
+   * 前后端约定:后端会在收到 offlineMode=true 时拒绝任何外部 API 调用;
+   * proxyEnabled + proxyUrl 配合使用,保存后立即生效。
+   */
+  updateAppConfig: (input: {
+    proxyEnabled?: boolean;
+    proxyUrl?: string;
+    offlineMode?: boolean;
+  }) =>
+    request<{ ok: boolean; message?: string }>('/settings/app', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+
+  /**
+   * 拉取全局应用配置 - 后端权威(.env / 运行时覆盖的合并结果)
+   * 供设置页进入时回填,确保前端 localStorage 与后端配置一致
+   */
+  getAppConfig: () =>
+    request<{ proxyEnabled: boolean; proxyUrl: string; offlineMode: boolean }>('/settings/app'),
 
   // ----- 讨论梳理画布 -----
   /** 创建梳理会话;带 message 时直接开聊(异步);projectId 用于关联项目(报告页"进一步探讨") */

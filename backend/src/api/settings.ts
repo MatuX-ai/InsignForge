@@ -4,6 +4,9 @@
  * GET   /llm                查询 LLM 配置状态(不返回 key 明文)
  * PUT   /llm/config         切换 provider / model(立即生效)
  * PUT   /llm/api-key        更新 LLM API Key(写入运行期 + 持久化 .env)
+ * PUT   /search             更新搜索引擎配置(provider / SerpAPI Key)
+ * GET   /app                查询全局应用配置(代理 / 离线模式)
+ * PUT   /app                更新全局应用配置(FR-08 代理 / FR-18 离线模式)
  */
 import { Router } from 'express';
 import { z } from 'zod';
@@ -13,6 +16,8 @@ import {
   setLlmApiKey,
   setLlmConfig,
   setSearchConfig,
+  getAppConfig,
+  setAppConfig,
   type LlmProvider,
   type SearchProvider,
 } from '../services/SettingsService.js';
@@ -90,5 +95,36 @@ settingsRouter.put(
       apiKey: parsed.data.apiKey,
     });
     return ok(res, { ok: true }, '搜索配置已更新,新调研将立即生效');
+  })
+);
+
+/**
+ * 全局应用配置请求 schema (FR-08 代理 / FR-18 离线模式)
+ * 所有字段都是可选的,前端可以单独更新任意一项。
+ */
+const appConfigSchema = z.object({
+  proxyEnabled: z.boolean().optional(),
+  proxyUrl: z.string().max(500).optional(),
+  offlineMode: z.boolean().optional(),
+});
+
+/** 查询全局应用配置(供设置页回填) */
+settingsRouter.get(
+  '/app',
+  asyncHandler((_req, res) => {
+    return ok(res, getAppConfig());
+  })
+);
+
+/** 更新全局应用配置(代理 / 离线模式),立即生效并持久化到 .env */
+settingsRouter.put(
+  '/app',
+  asyncHandler<{ body: unknown }>((req, res) => {
+    const parsed = appConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return ok(res, { ok: false, message: parsed.error.message });
+    }
+    const next = setAppConfig(parsed.data);
+    return ok(res, { ok: true, ...next }, '应用配置已更新');
   })
 );
