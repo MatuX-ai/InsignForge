@@ -17,6 +17,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useDesktopApi } from '../hooks/useDesktopApi';
 import { useProjectTags, type UseProjectTagsApi } from '../hooks/useProjectTags';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 import { StatusBadge } from '../components/StatusBadge';
 import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
@@ -39,6 +40,8 @@ const SORT_LABEL: Record<SortBy, string> = {
 export function History() {
   const navigate = useNavigate();
   const dialog = useDialog();
+  // v1.8 P8-C: 移动端边缘右滑返回(桌面端零开销)
+  useSwipeBack();
   const [projects, setProjects] = useState<Project[]>([]);
   const [archives, setArchives] = useState<HistoryArchives>({});
   const [loading, setLoading] = useState(true);

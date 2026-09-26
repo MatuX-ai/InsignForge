@@ -6,7 +6,7 @@
  * - 内置 focus trap:打开时聚焦首按钮,Tab/Shift+Tab 在内部循环,关闭后还原焦点
  * - v1.8 P1-B: 支持 size 调节宽度 + bodyClassName 让大弹窗复用同一遮罩/焦点逻辑
  */
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 
@@ -60,6 +60,9 @@ export function Modal({
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  // v1.8 P8-C: 下滑关闭手势 - dragY 跟踪纵向位移;拖动过程中弹窗跟手下移,松手根据距离决定关闭或复位
+  const [dragY, setDragY] = useState(0);
+  const dragStartRef = useRef<{ y: number; t: number } | null>(null);
 
   // Esc 关闭 + focus trap(在容器内循环)+ 开关时的焦点记录/还原
   useEffect(() => {
@@ -163,14 +166,63 @@ export function Modal({
         onClick={maskClosable ? onClose : undefined}
       />
       {/* v1.8 P2-B: 弹窗主体上浮+渐入,200ms cubic-bezier(0.16, 1, 0.3, 1) */}
+      {/* v1.8 P8-C: 下滑关闭 - 拖动时整面板跟手 translateY,松手按距离决定关闭或复位 */}
       <div
         ref={containerRef}
+        style={{
+          transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
+          transition: dragStartRef.current === null ? 'transform 0.2s ease-out' : 'none',
+        }}
         className={`relative bg-card-solid/95 backdrop-blur-2xl border border-border rounded-card shadow-glass w-full ${sizeClassMap[size]} if-panel-rise ${
           maxHeightClass ? `flex flex-col ${maxHeightClass}` : ''
         }`}
+        onTouchStart={(e) => {
+          // 仅在 header 区域内的触摸启动拖动(避免与 body 滚动冲突)
+          if (e.touches.length !== 1) return;
+          const target = e.target as HTMLElement;
+          const headerEl = (e.currentTarget as HTMLElement).querySelector('[data-modal-header]');
+          if (headerEl === null || !headerEl.contains(target)) return;
+          // header 内的 button / a / input 等交互元素不算拖动起点(避免与点击冲突)
+          if (target.closest('button, a, input, textarea, select')) return;
+          const t = e.touches[0]!;
+          dragStartRef.current = { y: t.clientY, t: Date.now() };
+        }}
+        onTouchMove={(e) => {
+          const start = dragStartRef.current;
+          if (start === null || e.touches.length !== 1) return;
+          const t = e.touches[0]!;
+          const dy = t.clientY - start.y;
+          // 只允许向下拖动(向上忽略),超过 0 才更新状态
+          if (dy <= 0) {
+            setDragY(0);
+            return;
+          }
+          setDragY(dy);
+        }}
+        onTouchEnd={() => {
+          const start = dragStartRef.current;
+          if (start === null) return;
+          dragStartRef.current = null;
+          // 下滑距离达阈 → 关闭;否则弹回原位
+          if (dragY > 100) {
+            setDragY(0);
+            onClose();
+          } else {
+            setDragY(0);
+          }
+        }}
+        onTouchCancel={() => {
+          dragStartRef.current = null;
+          setDragY(0);
+        }}
       >
         {header ?? (
-          <h2 id="modal-title" className="text-section text-text-primary mb-3 font-semibold p-6 pb-0">
+          // v1.8 P8-C: data-modal-header 让下滑手势识别可拖动区
+          <h2
+            id="modal-title"
+            data-modal-header
+            className="text-section text-text-primary mb-3 font-semibold p-6 pb-0"
+          >
             {title}
           </h2>
         )}

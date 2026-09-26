@@ -24,9 +24,10 @@ import { SourceContributionCard } from '../components/SourceContributionCard';
 import { Container } from '../components/Container';
 import { PaperSizePicker } from '../components/PaperSizePicker';
 import { SectionAnnotation } from '../components/SectionAnnotation';
-import { api } from '../lib/api';
+import { api, API_BASE } from '../lib/api';
 import { useResearch } from '../hooks/useResearch';
 import { useDesktopApi } from '../hooks/useDesktopApi';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 import { explainError } from '../lib/errorMessages';
 import { applyPaperSize, loadPdfPreferences } from '../lib/pdfPreferences';
 import { getLlmProvider } from '../lib/llmProviders';
@@ -345,8 +346,10 @@ export function Report() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const dialog = useDialog();
-    /** v1.8 P0-A3: 集中消费桌面端 API,避免散落 window.insightforge?.openPath / saveDir */
-    const desktop = useDesktopApi();
+  /** v1.8 P0-A3: 集中消费桌面端 API,避免散落 window.insightforge?.openPath / saveDir */
+  const desktop = useDesktopApi();
+  // v1.8 P8-C: 移动端边缘右滑返回(桌面端零开销)
+  useSwipeBack();
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** 导出中状态:'md'/'pdf'/'json'/null */
@@ -377,6 +380,10 @@ export function Report() {
   const bpTimerRef = useRef<number | null>(null);
   /** 复制成功提示 */
   const [copySuccess, setCopySuccess] = useState(false);
+  /** v1.8 P8-B: 复制 Markdown 进行中(报告生成 markdown 文本 + 写剪贴板比纯摘要慢,需独立 loading) */
+  const [copyMdBusy, setCopyMdBusy] = useState(false);
+  /** v1.8 P8-B: 复制 Markdown 成功提示(独立于摘要的 copySuccess,避免两项同时变 ✓ 造成歧义) */
+  const [copyMdSuccess, setCopyMdSuccess] = useState(false);
   /** 落地页预览弹窗 */
   const [landingPreview, setLandingPreview] = useState<string | null>(null);
   /** 落地页生成中 */
@@ -739,6 +746,62 @@ export function Report() {
       }
       setCopySuccess(true);
       setTimeout(() => setCopySuccess(false), 2000);
+    }
+  };
+
+  // v1.8 P8-B: 复制完整 Markdown 文本到剪贴板
+  // 复用了 Markdown 导出端点(/export/markdown),但走 fetch + text() 而非下载,
+  // 适合「粘到 Notion / 博客 / 飞书文档」这类无需落盘的使用场景。
+  // 与「复制摘要」共用 copySuccess 反馈提示。
+  const copyMarkdown = async () => {
+    if (!id) return;
+    setCopyMdBusy(true);
+    try {
+      const url = `${API_BASE}${api.reportDownloadUrl(id, 'md')}`;
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) {
+        // 服务端业务错误可能为 JSON { code, message }
+        const raw = await res.text().catch(() => res.statusText);
+        let detail = `HTTP ${res.status}`;
+        if (raw.trim().startsWith('{')) {
+          try {
+            const j = JSON.parse(raw) as { message?: string };
+            if (j.message) detail = j.message;
+          } catch {
+            detail = `${detail}: ${raw}`;
+          }
+        } else if (raw.trim()) {
+          detail = `${detail}: ${raw}`;
+        }
+        throw new Error(detail);
+      }
+      const text = await res.text();
+      // 与 copySummary 同样的双路径写入 + 降级
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(ta);
+        }
+      }
+      setCopyMdSuccess(true);
+      window.setTimeout(() => setCopyMdSuccess(false), 2000);
+    } catch (err) {
+      await dialog.alert({
+        title: '复制 Markdown 失败',
+        message: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
+    } finally {
+      setCopyMdBusy(false);
     }
   };
 
@@ -2372,7 +2435,10 @@ export function Report() {
                   {/* 组 1: 分享 + 导出 (次要) */}
                   <Dropdown
                     trigger={
-                      <Button variant="outline" disabled={exportBusy !== null}>
+                      <Button
+                        variant="outline"
+                        disabled={exportBusy !== null || copyMdBusy}
+                      >
                         分享 ▾
                       </Button>
                     }
@@ -2380,6 +2446,18 @@ export function Report() {
                       {
                         label: copySuccess ? '✓ 已复制!' : '📋 复制摘要',
                         onClick: () => void copySummary(),
+                      },
+                      {
+                        // v1.8 P8-B: 复制完整 Markdown 文本到剪贴板
+                        // 复用后端 /export/markdown 端点但走 fetch + text(),适合「粘到 Notion / 博客」场景
+                        label:
+                          copyMdBusy
+                            ? '⏳ 生成中...'
+                            : copyMdSuccess
+                              ? '✓ 已复制!'
+                              : '📝 复制 Markdown',
+                        onClick: () => void copyMarkdown(),
+                        loading: copyMdBusy,
                       },
                       {
                         label: '🔗 复制链接',

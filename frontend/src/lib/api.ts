@@ -28,7 +28,10 @@ import type {
   PluginManifest,
 } from '../types';
 
+/** API 基础路径(内部统一使用 BASE) */
 const BASE = '/api/v1';
+/** 导出供少数特殊场景复用(如 Report.tsx 的「复制 Markdown」直接 fetch 下载端点) */
+export const API_BASE = BASE;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;

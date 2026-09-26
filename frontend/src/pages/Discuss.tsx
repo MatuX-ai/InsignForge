@@ -10,6 +10,8 @@ import { Button } from '../components/Button';
 import { Banner } from '../components/Banner';
 import { Container } from '../components/Container';
 import { useDialog } from '../components/Dialog';
+import { useDiscussCollapse } from '../hooks/useDiscussCollapse';
+import { useSwipeBack } from '../hooks/useSwipeBack';
 import { api } from '../lib/api';
 import type {
   CanvasGroup,
@@ -234,12 +236,18 @@ export function Discuss() {
   /** 去验证: 正在创建项目并跳转 */
   const [validating, setValidating] = useState(false);
 
+  // v1.8 P8-C: 移动端边缘右滑返回(桌面端不挂载任何 listener,零开销)
+  useSwipeBack();
+
   // URL 参数支持:
   //   /discuss/:id   → 直接打开指定会话(报告页"进一步探讨"跳转)
   //   /discuss?q=xxx → 预填新建梳理的描述(首页"我还没有想清楚"跳转)
   const { id: urlId } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  // v1.8 P8-A: 画布分组折叠状态(按 session 隔离,持久化到 localStorage)
+  const collapseApi = useDiscussCollapse(currentId);
 
   // 快捷改要点歧义选择: 多条匹配时让用户点选要改哪条
   const [quickEditAmbiguous, setQuickEditAmbiguous] = useState<{
@@ -1199,7 +1207,13 @@ export function Discuss() {
             </Button>
           </div>
           <div className="flex-1 min-h-0 overflow-hidden">
-            <CanvasPanel session={session} onApply={onApply} disabled={anyRunning} />
+            <CanvasPanel
+              session={session}
+              onApply={onApply}
+              disabled={anyRunning}
+              // v1.8 P8-A: 折叠状态传递到画布面板
+              collapseApi={collapseApi}
+            />
           </div>
         </div>
 
@@ -1450,10 +1464,13 @@ function CanvasPanel({
   session,
   onApply,
   disabled,
+  // v1.8 P8-A: 折叠 API 由父组件提供,避免每个画布面板都重新读 localStorage
+  collapseApi,
 }: {
   session: DiscussionSession;
   onApply: (ops: DiscussionOp[]) => Promise<void>;
   disabled: boolean;
+  collapseApi: import('../hooks/useDiscussCollapse').UseDiscussCollapseApi;
 }) {
   const [newGroupTitle, setNewGroupTitle] = useState('');
 
@@ -1465,14 +1482,36 @@ function CanvasPanel({
     setNewGroupTitle('');
   };
 
+  // v1.8 P8-A: 全部折叠/展开按钮的状态(全部展开 vs 部分折叠)
+  const totalGroups = session.canvas.groups.length;
+  const allCollapsed =
+    totalGroups > 0 && collapseApi.totalCollapsed === totalGroups;
+
   return (
     <div className="bg-card backdrop-blur-xl border border-border rounded-card shadow-glass flex flex-col min-h-0 overflow-hidden">
       {/* sticky 标题: 长画布滚动时"要点画布 / N 个要点"始终钉在顶部 */}
-      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-card-solid/95 backdrop-blur">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-card-solid/95 backdrop-blur">
         <h2 className="text-body text-text-primary font-medium">要点画布</h2>
-        <span className="text-label text-text-secondary">
-          {totalPointCount(session.canvas)} 个要点
-        </span>
+        <div className="flex items-center gap-3">
+          {/* v1.8 P8-A: 一键全部折叠 / 展开 - 状态在 hook 中持久化 */}
+          {totalGroups > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                allCollapsed
+                  ? collapseApi.expandAll()
+                  : collapseApi.collapseAll(session.canvas.groups.map((g) => g.id))
+              }
+              className="text-helper text-text-secondary hover:text-primary transition-colors"
+              title={allCollapsed ? '展开所有分组' : '折叠所有分组'}
+            >
+              {allCollapsed ? '全部展开' : '全部折叠'}
+            </button>
+          )}
+          <span className="text-label text-text-secondary">
+            {totalPointCount(session.canvas)} 个要点
+          </span>
+        </div>
       </div>
 
       {/*
@@ -1492,7 +1531,16 @@ function CanvasPanel({
                 用 md:grid-cols-2 让卡片在中宽度及以上始终两列展示,避免单列上下堆叠占满屏高。
                 xl 以上如果用户把画布拉到很宽,再触发 3 列(此时画布宽度足够,不会拥挤)。 */}
             {session.canvas.groups.map((g) => (
-              <GroupCard key={g.id} group={g} groups={session.canvas.groups} onApply={onApply} disabled={disabled} />
+              <GroupCard
+                key={g.id}
+                group={g}
+                groups={session.canvas.groups}
+                onApply={onApply}
+                disabled={disabled}
+                // v1.8 P8-A: 折叠状态由父组件 hook 统一管理,避免每张卡片各自读 localStorage
+                collapsed={collapseApi.isCollapsed(g.id)}
+                onToggleCollapse={() => collapseApi.toggleGroup(g.id)}
+              />
             ))}
           </div>
         )}
@@ -1526,11 +1574,16 @@ function GroupCard({
   groups,
   onApply,
   disabled,
+  // v1.8 P8-A: 折叠状态由父组件 hook 注入
+  collapsed,
+  onToggleCollapse,
 }: {
   group: CanvasGroup;
   groups: CanvasGroup[];
   onApply: (ops: DiscussionOp[]) => Promise<void>;
   disabled: boolean;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(group.title);
@@ -1563,6 +1616,25 @@ function GroupCard({
     <div className="border border-border rounded-lg p-3 bg-bg-secondary/50 backdrop-blur-sm flex flex-col gap-2 min-w-0">
       {/* 分组标题 */}
       <div className="flex items-center gap-2">
+        {/* v1.8 P8-A: 折叠 chevron - 折叠时折叠要点区,仅保留标题与计数;状态由父 hook 持久化 */}
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          disabled={disabled}
+          aria-label={collapsed ? '展开要点' : '折叠要点'}
+          aria-expanded={!collapsed}
+          title={collapsed ? '展开要点' : '折叠要点'}
+          className="shrink-0 w-5 h-5 flex items-center justify-center text-text-secondary hover:text-primary disabled:opacity-40 transition-colors"
+        >
+          <span
+            aria-hidden
+            className={`inline-block transition-transform duration-200 ${
+              collapsed ? '' : 'rotate-90'
+            }`}
+          >
+            ▶
+          </span>
+        </button>
         {renaming ? (
           <input
             type="text"
@@ -1591,6 +1663,12 @@ function GroupCard({
             {group.title}
           </span>
         )}
+        {/* 折叠时在标题末尾显示要点计数,一眼可看该分组容量 */}
+        {collapsed && group.points.length > 0 && (
+          <span className="shrink-0 text-label text-text-tertiary">
+            {group.points.length} 个要点
+          </span>
+        )}
         <button
           type="button"
           title="删除分组"
@@ -1612,8 +1690,14 @@ function GroupCard({
         </button>
       </div>
 
-      {/* 要点列表 */}
-      <div className="flex flex-col gap-1.5 min-h-[24px]">
+      {/* 要点列表 + 新增要点 - 折叠时整体收起(via grid 行高动画,与 quickEdit 模式一致) */}
+      <div
+        className={`grid transition-all duration-200 ease-out ${
+          collapsed ? 'grid-rows-[0fr] opacity-0' : 'grid-rows-[1fr] opacity-100'
+        }`}
+      >
+        <div className="overflow-hidden min-h-0">
+          <div className="flex flex-col gap-1.5 min-h-[24px]">
         {group.points.map((p) => {
           const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(p.status) + 1) % STATUS_CYCLE.length]!;
           const meta = STATUS_META[p.status];
@@ -1670,25 +1754,27 @@ function GroupCard({
             </div>
           );
         })}
-      </div>
 
-      {/* 新增要点 */}
-      <div className="flex gap-1.5">
-        <input
-          type="text"
-          placeholder="添加要点…"
-          value={newPoint}
-          maxLength={500}
-          disabled={disabled}
-          onChange={(e) => setNewPoint(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') addPoint();
-          }}
-          className="flex-1 min-w-0 h-8 px-2 text-[13px] text-text-primary bg-card-solid/50 border border-border rounded-lg focus:outline-none focus:border-primary/60 placeholder:text-text-tertiary disabled:opacity-40 disabled:cursor-not-allowed"
-        />
-        <Button variant="outline" onClick={addPoint} disabled={disabled || !newPoint.trim()}>
-          +
-        </Button>
+            {/* 新增要点 - 与要点列表一起折叠 */}
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                placeholder="添加要点…"
+                value={newPoint}
+                maxLength={500}
+                disabled={disabled}
+                onChange={(e) => setNewPoint(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPoint();
+                }}
+                className="flex-1 min-w-0 h-8 px-2 text-[13px] text-text-primary bg-card-solid/50 border border-border rounded-lg focus:outline-none focus:border-primary/60 placeholder:text-text-tertiary disabled:opacity-40 disabled:cursor-not-allowed"
+              />
+              <Button variant="outline" onClick={addPoint} disabled={disabled || !newPoint.trim()}>
+                +
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
