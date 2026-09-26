@@ -28,6 +28,7 @@ import { useResearch } from '../hooks/useResearch';
 import { useDesktopApi } from '../hooks/useDesktopApi';
 import { explainError } from '../lib/errorMessages';
 import { applyPaperSize, loadPdfPreferences } from '../lib/pdfPreferences';
+import { getLlmProvider } from '../lib/llmProviders';
 import type {
   DocsJob,
   BpJob,
@@ -39,6 +40,7 @@ import type {
   FrontendDesignPlan,
   DocVersion,
   HistoryArchives,
+  LlmStatus,
 } from '../types';
 
 /**
@@ -428,6 +430,8 @@ export function Report() {
   const [businessModel, setBusinessModel] = useState('');
   /** 历史文档归档(项目名 -> 已生成文档列表),用于左侧"已生成文档" */
   const [archives, setArchives] = useState<HistoryArchives>({});
+  /** v1.8 P3-A 信任感: 当前 LLM 提供商 + 模型(供报告页头部信任头展示) */
+  const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   /** 复制并重新调研 - 加载中状态(置于顶层 hooks 区,避免与其他 useEffect 交错导致顺序不一致) */
   const [duplicating, setDuplicating] = useState(false);
 
@@ -571,6 +575,16 @@ export function Report() {
     api.getArchives().then(setArchives).catch(() => {
       // 归档目录不存在等场景静默忽略
     });
+  }, []);
+
+  // v1.8 P3-A 信任感: 加载当前 LLM 状态,供报告页头部「生成模型」展示
+  useEffect(() => {
+    api
+      .getLlmStatus()
+      .then((s) => setLlmStatus(s))
+      .catch(() => {
+        // 桌面端首次启动 LLM 未配置等场景静默忽略,头部不展示模型名
+      });
   }, []);
 
   // v1.7.1 FR-13: 加载当前生效的落地页插件(供 Modal 头部展示)
@@ -995,6 +1009,58 @@ export function Report() {
             </div>
           )}
         </div>
+
+        {/* v1.8 P3-A 信任感: 报告页头部「生成时间 / 数据源 / 生成模型」一行信任头
+             - 报告未生成时不渲染(避免出现「暂无」之类的错价信息)
+             - 同比采取屏幕阅读器友好(以列表语义呈现 3 项) */}
+        {currentReport && (
+          <ul
+            className="mb-6 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-helper text-text-secondary"
+            aria-label="报告元信息"
+          >
+            {/* 生成时间 */}
+            {currentReport.generated_at && (
+              <li className="inline-flex items-center gap-1.5">
+                <span aria-hidden className="opacity-70">🕐</span>
+                <span>
+                  生成于{' '}
+                  <time dateTime={currentReport.generated_at} className="text-text-primary font-medium">
+                    {formatReportTime(currentReport.generated_at)}
+                  </time>
+                </span>
+              </li>
+            )}
+            {/* 数据源 */}
+            {currentReport.contributions && currentReport.contributions.length > 0 && (
+              <li className="inline-flex items-center gap-1.5">
+                <span aria-hidden className="opacity-70">📚</span>
+                <span>
+                  数据源{' '}
+                  <span className="text-text-primary font-medium">
+                    {currentReport.contributions.length} 个
+                  </span>
+                  {' / '}
+                  合计{' '}
+                  <span className="text-text-primary font-medium">
+                    {currentReport.contributions.reduce((acc, c) => acc + c.count, 0)} 条
+                  </span>
+                </span>
+              </li>
+            )}
+            {/* 生成模型 */}
+            {llmStatus && (
+              <li className="inline-flex items-center gap-1.5">
+                <span aria-hidden className="opacity-70">🤖</span>
+                <span>
+                  生成模型{' '}
+                  <span className="text-text-primary font-medium" title={llmStatus.model}>
+                    {getLlmProvider(llmStatus.provider)?.label ?? llmStatus.provider} · {llmStatus.model}
+                  </span>
+                </span>
+              </li>
+            )}
+          </ul>
+        )}
 
         {isAnalyzing && (
           // vNext: 走马灯 + 阶段时间线 + ETA + 数据瀑布,替代原先简化的
@@ -2843,6 +2909,26 @@ function statusKind(s: string): 'success' | 'warning' | 'failed' | 'analyzing' |
 /** 与历史记录页一致的项目名归档键: 移除非法字符 + 截断 60 字符,用于匹配历史文档目录 */
 function sanitizeArchiveKey(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+}
+
+/**
+ * 格式化报告生成时间(v1.8 P3-A)
+ * - 同一日: "HH:mm"  (如 "14:32")
+ * - 当年:    "MM-DD HH:mm"  (如 "09-25 14:32")
+ * - 其他年份: "YYYY-MM-DD HH:mm"
+ */
+function formatReportTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const sameDay =
+    sameYear && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (sameDay) return time;
+  if (sameYear) return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
 }
 
 /** 文档名展示: 去掉 .zip 后缀,名字最多显示 8 个字,超出部分省略(完整名见 title) */

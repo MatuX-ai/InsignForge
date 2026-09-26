@@ -11,13 +11,14 @@ export default {
         success: '#10B981',
         warning: '#F59E0B',
         danger: '#EF4444',
+        // v1.8 P3-E: 验证并锁定 WCAG AA / AAA 阈值。背景为 #0F172A / #1E293B / 玻璃拟态 rgba:
+        //   - text-primary  (#F1F5F9) ≈ 14:1  → AAA
+        //   - text-secondary(#B7BFCD) ≈ 9.5:1 → AAA
+        //   - text-tertiary (#94A3B8) ≈ 6.4:1 → AA / 接近 AAA, 可用于 meta / hint
+        //   - text-muted    (#64748B) ≈ 3.7:1 → 仅“装饰性”用途(分隔符、极弱点缀),严禁用于可读文本
         'text-primary': '#F1F5F9',
-        // WCAG AA: text-secondary 在 #1E293B 卡片背景上约 6.2:1,达 AA / 接近 AAA
         'text-secondary': '#B7BFCD',
-        // WCAG AA: text-tertiary 为 hint / placeholder / meta 等关键提示文本服务,
-        //          在 #1E293B + #0F172A 上均 ≥ 4.7:1,达 AA
         'text-tertiary': '#94A3B8',
-        // 仅“装饰性”文本(分隔符 / 极弱的装饰),不用于可读的关键提示;不是 AA 目标
         'text-muted': '#64748B',
         bg: '#0F172A', // 深蓝黑背景
         'bg-secondary': '#1E293B', // 次级背景

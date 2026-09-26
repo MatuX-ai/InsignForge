@@ -24,11 +24,16 @@ const APP_VERSION: string =
   (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_APP_VERSION ??
   '0.0.0';
 
+/* v1.8 P3-B: 移动端汉堡菜单项加图标 + 可访问性强化
+ * - 移动端 <lg(<1024px) 时使用汉堡菜单,与设计文档 §2.2 断点对齐
+ * - 菜单项增加 icon 字符以提升移动端识别速度
+ * - role=menu / menuitem 已存在,补充 aria-orientation
+ */
 const tabs: Array<{ path: string; label: string; icon?: string }> = [
-  { path: '/', label: '首页' },
-  { path: '/discuss', label: '梳理' },
-  { path: '/history', label: '历史' },
-  { path: '/settings', label: '设置' },
+  { path: '/', label: '首页', icon: '🏠' },
+  { path: '/discuss', label: '梳理', icon: '💬' },
+  { path: '/history', label: '历史', icon: '📚' },
+  { path: '/settings', label: '设置', icon: '⚙️' },
   { path: '/monitor', label: '监控', icon: '🩺' },
 ];
 
@@ -210,7 +215,8 @@ export function TopBar() {
           {open && (
             <div
               role="menu"
-              className="absolute right-0 top-full mt-2 w-44 bg-card-solid/95 backdrop-blur-2xl border border-border rounded-lg shadow-glass z-30 overflow-hidden"
+              aria-orientation="vertical"
+              className="absolute right-0 top-full mt-2 w-48 bg-card-solid/95 backdrop-blur-2xl border border-border rounded-lg shadow-glass z-30 overflow-hidden if-panel-rise"
             >
               {tabs.map((tab) => {
                 const active = location.pathname === tab.path;
@@ -219,13 +225,14 @@ export function TopBar() {
                     key={tab.path}
                     to={tab.path}
                     role="menuitem"
-                    className={`block px-4 py-3 text-body transition-colors ${
+                    className={`flex items-center gap-2 px-4 py-3 text-body transition-colors ${
                       active
                         ? 'text-primary-light bg-primary/10 font-medium'
                         : 'text-text-primary hover:bg-hover-bg'
                     }`}
                   >
-                    {tab.label}
+                    {tab.icon && <span aria-hidden>{tab.icon}</span>}
+                    <span>{tab.label}</span>
                   </Link>
                 );
               })}

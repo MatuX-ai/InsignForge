@@ -89,17 +89,35 @@ export function Modal({
       if (e.key !== 'Tab') return;
       const root = containerRef.current;
       if (root === null) return;
-      const focusables = Array.from(
+      // v1.8 P3-D: 使用 visibility check 代替 offsetParent,避免嵌套 display:none 元素被误判为不可见
+      const isVisible = (el: Element): boolean => {
+        const ht = el as HTMLElement;
+        if (ht.offsetParent !== null || ht === (document.activeElement as Element)) return true;
+        // offsetParent 为 null 但仍在视口内(例如 position:fixed): 用 getBoundingClientRect 验证
+        const rect = ht.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const focusables = (Array.from(
         root.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
-      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
+      ) as HTMLElement[]).filter(isVisible);
+      if (focusables.length === 0) {
+        // v1.8 P3-D: 容器内无任何可聚焦元素时,拦截 Tab 防止焦点漂到背景
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
       const active = document.activeElement as HTMLElement | null;
+      // v1.8 P3-D: 如果焦点不在 Modal 内(例如用户点击了背景),主动拉回
+      if (active === null || !root.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first)?.focus();
+        return;
+      }
       if (e.shiftKey) {
-        if (active === first || !root.contains(active)) {
+        if (active === first) {
           e.preventDefault();
           last.focus();
         }
